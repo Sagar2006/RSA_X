@@ -101,8 +101,8 @@ class ExperimentRunner:
                 token_ids = input_ids[item_idx]
                 tokens_str = self.extractor.model.to_str_tokens(token_ids)
                 
-                # Check if we should save raw attention patterns (OOM/Disk safety)
-                if global_idx < save_raw_limit:
+                # Check if we should save raw attention patterns (Hard storage-efficient limit: max 3 samples)
+                if global_idx < min(save_raw_limit, 3):
                     logger.info(f"Saving raw attention weights for sample {global_idx}...")
                     # Extract sample pattern: [num_layers, num_heads, seq_len, seq_len]
                     sample_pattern = patterns[item_idx]

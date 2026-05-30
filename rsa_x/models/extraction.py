@@ -81,72 +81,35 @@ class AttentionExtractor:
         
         return stacked
 
-    def save_raw_attention(self, pattern: torch.Tensor, tokens: list, sample_idx: int):
+    def save_raw_attention(self, pattern: torch.Tensor, tokens: list, sample_idx: int) -> dict:
         """
-        Saves raw attention tensors for a single sample in three formats:
-        NumPy (.npy), JSON, and a memory-efficient sparse Parquet format.
+        Saves raw attention tensors and tokens for a single sample in a single, 
+        highly optimized compressed NumPy format (.npz) to minimize storage footprint.
         
         Args:
             pattern (torch.Tensor): Pattern tensor of shape [num_layers, num_heads, seq_len, seq_len].
             tokens (list): Token string representation list of length seq_len.
             sample_idx (int): Unique identifier of the sample.
+            
+        Returns:
+            dict: Dictionary containing file size details.
         """
         seq_len = pattern.shape[2]
         pattern_np = pattern.numpy().astype(np.float32)
         
         # Base file path
         base_path = os.path.join(self.raw_tensors_dir, f"sample_{sample_idx}")
+        npz_file = f"{base_path}.npz"
         
-        # 1. Save NumPy array (direct binary representation)
-        np_file = f"{base_path}.npy"
-        np.save(np_file, pattern_np)
-        logger.info(f"Saved raw attention tensor as NumPy: {np_file}")
+        # Save both attention matrix and token strings in a single compressed NPZ binary file
+        np.savez_compressed(
+            npz_file,
+            attention=pattern_np,
+            tokens=np.array(tokens)
+        )
+        logger.info(f"Saved raw attention tensor as compressed NumPy NPZ: {npz_file}")
         
-        # 2. Save JSON file (nested dictionary structure)
-        json_file = f"{base_path}.json"
-        json_data = {
-            "metadata": {
-                "sample_idx": sample_idx,
-                "seq_len": seq_len,
-                "tokens": tokens
-            },
-            "attention": {
-                f"layer_{l}": {
-                    f"head_{h}": pattern_np[l, h].tolist()
-                    for h in range(self.num_heads)
-                } for l in range(self.num_layers)
-            }
-        }
-        with open(json_file, "w") as f:
-            json.dump(json_data, f, indent=2)
-        logger.info(f"Saved raw attention tensor as JSON: {json_file}")
-        
-        # 3. Save Sparse Parquet (only records edges > near_zero_threshold)
-        parquet_file = f"{base_path}.parquet"
-        threshold = self.config["analysis"]["near_zero_threshold"]
-        
-        # Create sparse indices
-        layers, heads, queries, keys = np.where(pattern_np > threshold)
-        weights = pattern_np[layers, heads, queries, keys]
-        
-        # Create a compressed tabular DataFrame
-        sparse_df = pd.DataFrame({
-            "layer": layers.astype(np.int8),
-            "head": heads.astype(np.int8),
-            "query_pos": queries.astype(np.int16),
-            "key_pos": keys.astype(np.int16),
-            "weight": weights.astype(np.float32)
-        })
-        
-        # Save as Parquet
-        sparse_df.to_parquet(parquet_file, index=False, compression="snappy")
-        logger.info(f"Saved raw attention tensor as Sparse Parquet ({len(sparse_df)} edges): {parquet_file}")
-        
-        # Return file sizes for tracking
         return {
-            "npy_size_bytes": os.path.getsize(np_file),
-            "json_size_bytes": os.path.getsize(json_file),
-            "parquet_size_bytes": os.path.getsize(parquet_file),
-            "total_edges": seq_len * seq_len * self.num_layers * self.num_heads,
-            "sparse_edges": len(sparse_df)
+            "npz_size_bytes": os.path.getsize(npz_file),
+            "total_edges": seq_len * seq_len * self.num_layers * self.num_heads
         }

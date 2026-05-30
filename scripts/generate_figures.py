@@ -105,32 +105,19 @@ def main():
     logger.info("Initializing PublicationVisualizer...")
     visualizer = PublicationVisualizer(config)
     
-    # 1. Recreate Figure 1: Attention Heatmap (from first saved .npy raw file)
+    # 1. Recreate Figure 1: Attention Heatmap (from first saved .npz raw file)
     logger.info("Checking for saved raw attention tensors to regenerate Figure 1...")
     if os.path.exists(raw_tensors_dir):
-        npy_files = [f for f in os.listdir(raw_tensors_dir) if f.endswith(".npy")]
-        if npy_files:
-            target_npy = os.path.join(raw_tensors_dir, sorted(npy_files)[0])
-            logger.info(f"Loading raw attention tensor from {target_npy} for Figure 1...")
-            raw_pattern = np.load(target_npy) # [num_layers, num_heads, seq_len, seq_len]
+        npz_files = [f for f in os.listdir(raw_tensors_dir) if f.endswith(".npz")]
+        if npz_files:
+            target_npz = os.path.join(raw_tensors_dir, sorted(npz_files)[0])
+            logger.info(f"Loading raw attention tensor from {target_npz} for Figure 1...")
+            sample_data = np.load(target_npz)
+            raw_pattern = sample_data["attention"] # [num_layers, num_heads, seq_len, seq_len]
+            tokens = list(sample_data["tokens"])
             
-            # Load corresponding tokens from JSON if available
-            tokens_json = target_npy.replace(".npy", ".json")
-            tokens = None
-            if os.path.exists(tokens_json):
-                try:
-                    with open(tokens_json, "r") as f:
-                        meta = yaml.safe_load(f)
-                        tokens = meta["metadata"]["tokens"]
-                except Exception as e:
-                    logger.warning(f"Could not load token strings: {e}")
+            sample_idx = int(npz_files[0].split("_")[1].split(".")[0])
             
-            sample_idx = int(npy_files[0].split("_")[1].split(".")[0])
-            
-            # Plot Middle layer 5, middle head 5
-            if tokens is None:
-                tokens = [str(i) for i in range(raw_pattern.shape[2])]
-                
             visualizer.plot_attention_heatmap(
                 raw_pattern[5, 5], 
                 tokens, 
@@ -139,7 +126,7 @@ def main():
                 sample_idx=sample_idx
             )
         else:
-            logger.warning("No raw .npy tensors found. Skipping Figure 1 regeneration.")
+            logger.warning("No raw .npz tensors found. Skipping Figure 1 regeneration.")
     else:
         logger.warning("Raw tensors directory does not exist. Skipping Figure 1 regeneration.")
         
