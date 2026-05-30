@@ -3,12 +3,12 @@ import logging
 import numpy as np
 import torch
 import pandas as pd
-from rsa_x.datasets.loader import get_dataset_loader
-from rsa_x.models.extraction import AttentionExtractor
-from rsa_x.analysis.entropy import EntropyAnalyzer
-from rsa_x.analysis.sparsity import SparsityAnalyzer
-from rsa_x.analysis.statistics import generate_summary_tables, fit_power_law
-from rsa_x.visualization.plots import PublicationVisualizer
+from dataset_pipeline.loader import get_dataset_loader
+from models.extraction import AttentionExtractor
+from analysis.entropy import EntropyAnalyzer
+from analysis.sparsity import SparsityAnalyzer
+from analysis.statistics import generate_summary_tables, fit_power_law
+from visualization.plots import PublicationVisualizer
 from experiments.tracker import ExperimentTracker
 
 logger = logging.getLogger(__name__)

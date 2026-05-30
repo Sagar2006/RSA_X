@@ -3,7 +3,7 @@ import argparse
 import yaml
 import logging
 import numpy as np
-from rsa_x.visualization.plots import PublicationVisualizer
+from visualization.plots import PublicationVisualizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,8 +18,12 @@ def load_yaml_config(config_path: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def find_latest_run_dir(results_root: str = "results") -> str:
+def find_latest_run_dir(results_root: str = None) -> str:
     """Finds the most recently modified run_ subdirectory in results/."""
+    if results_root is None:
+        script_dir = os.path.abspath(os.path.dirname(__file__))
+        results_root = os.path.abspath(os.path.join(script_dir, "..", "results"))
+        
     if not os.path.exists(results_root):
         return None
     subdirs = [
@@ -58,16 +62,22 @@ def main():
         logger.error(f"Failed to load baseline configuration: {e}")
         return
         
-    # Resolve target run directory
+    # Resolve target run directory absolutely relative to project root
+    SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
+    PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+    
     target_run = args.run_dir
     if not target_run:
         logger.info("No --run_dir specified. Scanning for the latest experimental run...")
-        target_run = find_latest_run_dir()
+        target_run = find_latest_run_dir(os.path.join(PROJECT_ROOT, "results"))
         if not target_run:
             logger.error("No 'results/run_*' subdirectories found. Please execute main.py first.")
             return
         logger.info(f"Automatically identified latest run folder: {target_run}")
     else:
+        # Resolve relative run_dir absolutely to project root
+        if not os.path.isabs(target_run):
+            target_run = os.path.abspath(os.path.join(PROJECT_ROOT, target_run))
         if not os.path.exists(target_run):
             logger.error(f"Target run directory does not exist: {target_run}")
             return

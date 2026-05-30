@@ -2,9 +2,9 @@ import pytest
 import torch
 import numpy as np
 import pandas as pd
-from rsa_x.analysis.entropy import compute_entropy, EntropyAnalyzer
-from rsa_x.analysis.sparsity import compute_sparsity_metrics, SparsityAnalyzer
-from rsa_x.analysis.statistics import fit_power_law, generate_summary_tables
+from analysis.entropy import compute_entropy, EntropyAnalyzer
+from analysis.sparsity import compute_sparsity_metrics, SparsityAnalyzer
+from analysis.statistics import fit_power_law, generate_summary_tables
 
 def test_entropy_mathematical_bounds():
     """

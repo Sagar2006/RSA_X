@@ -41,7 +41,7 @@ We implement a deep, cascading dictionary merge in `main.py`. The baseline confi
 - **[configs/research.yaml](file:///c:/Users/sagar/Desktop/RSA_X/configs/research.yaml):** Baseline full-scale analysis template (100 samples, sequence length 256, batch size 2).
 
 ### 2.2 System Hardware Diagnostics
-A zero-dependency profiler `rsa_x/hardware.py` inspects the operating system, processor models, physical RAM sizes, CUDA availability, GPU device names, and VRAM. A diagnostic summary block is logged and printed automatically at the start of every experiment.
+A zero-dependency profiler `hardware.py` inspects the operating system, processor models, physical RAM sizes, CUDA availability, GPU device names, and VRAM. A diagnostic summary block is logged and printed automatically at the start of every experiment.
 
 ### 2.3 Run Isolation & Results Directory Partitioning
 To prevent overwriting prior experimental assets, every execution creates a timestamped isolated run folder:
@@ -89,7 +89,7 @@ python main.py --config configs/local.yaml
   - `experiment_metadata.json`
   - `logs/experiment.log`
   - `metrics/layerwise_summary_table.csv` and `consolidated_metrics.npz`
-  - `raw_tensors/sample_0.npy` and `sample_0.parquet`
+  - `raw_tensors/sample_0.npz` and `sample_1.npz`
   - `figures/fig1_...png` to `fig7_...png` AND vector equivalents `fig1_...pdf` to `fig7_...pdf`.
 
 ---

@@ -6,7 +6,7 @@ import datetime
 import time
 import json
 import torch
-from rsa_x.hardware import get_hardware_diagnostics, print_hardware_summary
+from hardware import get_hardware_diagnostics, print_hardware_summary
 from experiments.runner import ExperimentRunner
 
 # We setup a basic logger initially, which we will reconfigure dynamically 
@@ -111,10 +111,11 @@ def main():
     if args.save_raw_samples is not None:
         config["storage"]["save_raw_samples"] = args.save_raw_samples
         
-    # 2. Results Directory Timestamping Isolation
+    # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
+    PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     run_folder = f"run_{timestamp}"
-    run_dir = os.path.join("results", run_folder)
+    run_dir = os.path.abspath(os.path.join(PROJECT_ROOT, "results", run_folder))
     
     # Create isolated folders
     figures_dir = os.path.join(run_dir, "figures")
