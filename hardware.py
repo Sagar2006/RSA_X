@@ -3,6 +3,7 @@ import platform
 import subprocess
 import logging
 import torch
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,8 @@ def get_cpu_model() -> str:
     return platform.processor() or "Unknown Processor"
 
 
-def get_system_ram() -> str:
-    """Retrieves Total System RAM installed robustly across Windows and Linux."""
+def get_system_ram_gb() -> float:
+    """Retrieves Total System RAM as a float in GB."""
     sys_type = platform.system()
     try:
         if sys_type == "Windows":
@@ -43,19 +44,43 @@ def get_system_ram() -> str:
             output = subprocess.check_output(cmd, shell=True).decode(encoding="utf-8", errors="ignore").strip()
             lines = [line.strip() for line in output.split("\n") if line.strip()]
             if len(lines) > 1:
-                bytes_ram = int(lines[1])
-                return f"{round(bytes_ram / (1024 ** 3), 2)} GB"
+                return int(lines[1]) / (1024 ** 3)
         elif sys_type == "Linux":
             if os.path.exists("/proc/meminfo"):
                 with open("/proc/meminfo", "r", encoding="utf-8") as f:
                     for line in f:
                         if "MemTotal" in line:
                             kb_ram = int(line.split()[1])
-                            return f"{round(kb_ram / (1024 ** 2), 2)} GB"
-    except Exception as e:
-        logger.debug(f"Failed to fetch detailed System RAM: {e}")
-        
-    return "Unknown Memory Size"
+                            return kb_ram / (1024 ** 2)
+    except Exception:
+        pass
+    return 16.0  # Safe fallback if detection fails
+
+
+def get_system_ram() -> str:
+    """Retrieves Total System RAM installed robustly across Windows and Linux."""
+    ram_gb = get_system_ram_gb()
+    return f"{round(ram_gb, 2)} GB"
+
+
+def get_gpu_vram_gb() -> float:
+    """Retrieves Total GPU VRAM as a float in GB."""
+    if torch.cuda.is_available():
+        try:
+            properties = torch.cuda.get_device_properties(0)
+            return properties.total_memory / (1024 ** 3)
+        except Exception:
+            pass
+    return 0.0
+
+
+def get_available_disk_space() -> str:
+    """Retrieves available disk space on the current drive."""
+    try:
+        _, _, free = shutil.disk_usage(".")
+        return f"{round(free / (1024 ** 3), 2)} GB"
+    except Exception:
+        return "Unknown"
 
 
 def get_hardware_diagnostics() -> dict:
@@ -68,13 +93,13 @@ def get_hardware_diagnostics() -> dict:
     cuda_available = torch.cuda.is_available()
     gpu_name = None
     gpu_vram = None
+    gpu_vram_gb = get_gpu_vram_gb()
+    ram_gb = get_system_ram_gb()
     
     if cuda_available:
         try:
             gpu_name = torch.cuda.get_device_name(0)
-            properties = torch.cuda.get_device_properties(0)
-            total_vram = properties.total_memory
-            gpu_vram = f"{round(total_vram / (1024 ** 3), 2)} GB"
+            gpu_vram = f"{round(gpu_vram_gb, 2)} GB"
         except Exception as e:
             logger.debug(f"Failed to fetch detailed GPU diagnostics: {e}")
             gpu_name = "NVIDIA CUDA GPU (Properties Unreadable)"
@@ -84,10 +109,14 @@ def get_hardware_diagnostics() -> dict:
         "os": platform.system(),
         "os_release": platform.release(),
         "cpu": get_cpu_model(),
+        "cpu_core_count": os.cpu_count() or 1,
         "ram": get_system_ram(),
+        "ram_gb": ram_gb,
         "cuda_available": cuda_available,
         "gpu_name": gpu_name if gpu_name else "N/A",
-        "gpu_vram": gpu_vram if gpu_vram else "N/A"
+        "gpu_vram": gpu_vram if gpu_vram else "N/A",
+        "gpu_vram_gb": gpu_vram_gb,
+        "available_disk_space": get_available_disk_space()
     }
 
 

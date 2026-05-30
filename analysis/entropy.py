@@ -50,10 +50,14 @@ class EntropyAnalyzer:
                 [batch_size, num_layers, num_heads, seq_len, seq_len].
                 
         Returns:
-            dict: Dictionary containing structured entropy tensors at various levels.
+            dict: Dictionary containing structured entropy tensors at various levels and timings.
         """
+        import time
         # Shape inputs
         batch_size, num_layers, num_heads, seq_len, _ = attention_patterns.shape
+        
+        # Measure computation time
+        compute_start = time.perf_counter()
         
         # Calculate per-token (query) entropy
         # Output shape: [batch_size, num_layers, num_heads, seq_len]
@@ -71,14 +75,31 @@ class EntropyAnalyzer:
         # Output shape: [batch_size]
         sample_entropy = layer_entropy.mean(dim=-1)
         
+        compute_end = time.perf_counter()
+        compute_duration = compute_end - compute_start
+        
+        # Measure transfer time
+        transfer_start = time.perf_counter()
+        token_entropy_np = token_entropy.cpu().numpy()
+        head_entropy_np = head_entropy.cpu().numpy()
+        layer_entropy_np = layer_entropy.cpu().numpy()
+        sample_entropy_np = sample_entropy.cpu().numpy()
+        mean_dataset_entropy = head_entropy.mean().item()
+        transfer_end = time.perf_counter()
+        transfer_duration = transfer_end - transfer_start
+        
         # Theoretical maximum entropy for sequence length L: log(L)
         max_entropy = np.log(seq_len)
         
         return {
-            "token_entropy": token_entropy.numpy(),
-            "head_entropy": head_entropy.numpy(),
-            "layer_entropy": layer_entropy.numpy(),
-            "sample_entropy": sample_entropy.numpy(),
+            "token_entropy": token_entropy_np,
+            "head_entropy": head_entropy_np,
+            "layer_entropy": layer_entropy_np,
+            "sample_entropy": sample_entropy_np,
             "max_entropy": max_entropy,
-            "mean_dataset_entropy": head_entropy.mean().item()
+            "mean_dataset_entropy": mean_dataset_entropy,
+            "timings": {
+                "metric_computation": compute_duration,
+                "tensor_transfer": transfer_duration
+            }
         }

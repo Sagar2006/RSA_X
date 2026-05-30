@@ -70,7 +70,7 @@ class AttentionExtractor:
         for layer in range(self.num_layers):
             pattern_key = f"blocks.{layer}.attn.hook_pattern"
             if pattern_key in cache:
-                batch_patterns.append(cache[pattern_key].cpu())
+                batch_patterns.append(cache[pattern_key])
             else:
                 raise KeyError(f"Hook pattern for layer {layer} not found in activation cache.")
                 
@@ -92,32 +92,56 @@ class AttentionExtractor:
             sample_idx (int): Unique identifier of the sample.
             
         Returns:
-            dict: Dictionary containing file size details.
+            dict: Dictionary containing file size details and fine-grained timings.
         """
+        import time
+        import io
+        
+        logger.info(f"save_start: Saving raw attention for sample {sample_idx}...")
+        
+        # 1. Measure Tensor Transfer GPU -> CPU
+        transfer_start = time.perf_counter()
+        pattern_cpu = pattern.cpu()
+        transfer_end = time.perf_counter()
+        transfer_duration = transfer_end - transfer_start
+        
         seq_len = pattern.shape[2]
-        pattern_np = pattern.numpy().astype(np.float32)
+        pattern_np = pattern_cpu.numpy().astype(np.float32)
         
         # Base file path
         base_path = os.path.join(self.raw_tensors_dir, f"sample_{sample_idx}")
         npz_file = f"{base_path}.npz"
         
-        # Save both attention matrix and token strings in a single compressed NPZ binary file
-        import time
-        logger.info(f"save_start: Saving raw attention for sample {sample_idx}...")
-        start_time = time.perf_counter()
-        
+        # 2. Measure Compression time (using an in-memory buffer)
+        compress_start = time.perf_counter()
+        buffer = io.BytesIO()
         np.savez_compressed(
-            npz_file,
+            buffer,
             attention=pattern_np,
             tokens=np.array(tokens)
         )
+        buffer.seek(0)
+        compressed_data = buffer.read()
+        compress_end = time.perf_counter()
+        compression_duration = compress_end - compress_start
         
-        end_time = time.perf_counter()
-        duration = end_time - start_time
+        # 3. Measure Disk Write time
+        write_start = time.perf_counter()
+        with open(npz_file, "wb") as f:
+            f.write(compressed_data)
+        write_end = time.perf_counter()
+        disk_write_duration = write_end - write_start
+        
+        duration = transfer_duration + compression_duration + disk_write_duration
         logger.info(f"save_end: Saved raw attention for sample {sample_idx}.")
         logger.info(f"save_duration_seconds: {duration:.4f} seconds for sample {sample_idx}.")
         
         return {
             "npz_size_bytes": os.path.getsize(npz_file),
-            "total_edges": seq_len * seq_len * self.num_layers * self.num_heads
+            "total_edges": seq_len * seq_len * self.num_layers * self.num_heads,
+            "timings": {
+                "tensor_transfer": transfer_duration,
+                "compression": compression_duration,
+                "disk_write": disk_write_duration
+            }
         }

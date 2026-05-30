@@ -166,8 +166,109 @@ def main():
         force=True  # Force reconfiguration of baseline root logger
     )
     
-    # 4. Print System Diagnostics
-    logger.info("Initializing environment diagnostics...")
+    # 4. Hardware-Aware Execution Engine
+    logger.info("Initializing Hardware-Aware Execution Engine...")
+    diagnostics = get_hardware_diagnostics()
+    cuda_available = diagnostics["cuda_available"]
+    ram_gb = diagnostics.get("ram_gb", 16.0)
+    gpu_vram_gb = diagnostics.get("gpu_vram_gb", 0.0)
+    
+    # Check if research mode is explicitly requested via config or arguments
+    is_research = config.get("research_mode", False) or config["storage"].get("research_mode", False) or (args.config and "research" in args.config.lower())
+    
+    # Detect Kaggle automatically
+    is_kaggle = "KAGGLE_KERNEL_RUN_TYPE" in os.environ or "KAGGLE_CONTAINER_NAME" in os.environ or os.path.exists("/kaggle")
+    
+    if is_research:
+        selected_mode = "RESEARCH_MODE"
+    elif cuda_available and is_kaggle:
+        selected_mode = "GPU_MODE"
+    elif cuda_available and gpu_vram_gb >= 8.0:
+        selected_mode = "GPU_MODE"
+    elif ram_gb >= 16.0:
+        selected_mode = "STANDARD_MODE"
+    else:
+        selected_mode = "LOW_RESOURCE_MODE"
+        
+    logger.info(f"Hardware Engine selected mode: {selected_mode}")
+    
+    # Apply mode-specific settings overrides
+    if selected_mode == "LOW_RESOURCE_MODE":
+        config["dataset"]["num_samples"] = 10
+        config["dataset"]["max_seq_len"] = 128
+        config["dataset"]["batch_size"] = 1
+        config["storage"]["save_raw_samples"] = 0
+        config["storage"]["save_raw_attention"] = False
+        config["storage"]["save_debug_tensors"] = False
+        config["analysis"]["density_threshold"] = 1.0 / 128.0
+    elif selected_mode == "STANDARD_MODE":
+        config["dataset"]["num_samples"] = 50
+        config["dataset"]["max_seq_len"] = 256
+        config["dataset"]["batch_size"] = 1
+        config["storage"]["save_raw_samples"] = 0
+        config["storage"]["save_raw_attention"] = False
+        config["analysis"]["density_threshold"] = 1.0 / 256.0
+    elif selected_mode == "GPU_MODE":
+        config["dataset"]["num_samples"] = 500
+        config["dataset"]["max_seq_len"] = 512
+        config["storage"]["save_raw_samples"] = 0
+        config["storage"]["save_raw_attention"] = False
+        config["analysis"]["density_threshold"] = 1.0 / 512.0
+        
+        # Automatic Batch Size Selection
+        if config["dataset"].get("batch_size") == "auto" or config["dataset"].get("batch_size") is None or args.batch_size is None:
+            if gpu_vram_gb <= 4.0:
+                config["dataset"]["batch_size"] = 1
+            elif gpu_vram_gb <= 8.0:
+                config["dataset"]["batch_size"] = 2
+            elif gpu_vram_gb <= 16.0:
+                config["dataset"]["batch_size"] = 4
+            else:
+                config["dataset"]["batch_size"] = 8
+    elif selected_mode == "RESEARCH_MODE":
+        # Keep config defaults but allow limited raw archival
+        config["storage"]["save_raw_attention"] = config["storage"].get("save_raw_attention", True)
+        
+    # Enforce Automatic Storage Policy & Safety Constraints
+    debug_mode = config.get("debug_mode", False) or config["storage"].get("debug_mode", False)
+    
+    if debug_mode:
+        config["storage"]["save_raw_samples"] = 3
+    elif selected_mode == "RESEARCH_MODE":
+        config["storage"]["save_raw_samples"] = min(config["storage"].get("save_raw_samples", 3), 3)
+    else:
+        config["storage"]["save_raw_samples"] = 0
+        
+    # Kaggle-specific override
+    if is_kaggle:
+        logger.info("Enforcing Kaggle storage optimizations...")
+        config["storage"]["save_raw_samples"] = min(config["storage"].get("save_raw_samples", 0), 3)
+        if cuda_available:
+            config["model"]["device"] = "cuda"
+            
+    # Force device based on selected mode
+    if selected_mode == "GPU_MODE" or (selected_mode == "RESEARCH_MODE" and cuda_available):
+        config["model"]["device"] = "cuda"
+    elif selected_mode == "LOW_RESOURCE_MODE" or selected_mode == "STANDARD_MODE":
+        config["model"]["device"] = "cpu"
+        
+    # Write hardware_profile.json
+    hardware_profile = {
+        "cpu_model": diagnostics["cpu"],
+        "cpu_core_count": diagnostics["cpu_core_count"],
+        "available_ram": diagnostics["ram"],
+        "cuda_available": diagnostics["cuda_available"],
+        "gpu_name": diagnostics["gpu_name"],
+        "gpu_vram": diagnostics["gpu_vram"],
+        "available_disk_space": diagnostics["available_disk_space"],
+        "execution_mode": selected_mode
+    }
+    
+    profile_path = os.path.join(run_dir, "hardware_profile.json")
+    with open(profile_path, "w") as f:
+        json.dump(hardware_profile, f, indent=2)
+    logger.info(f"Hardware profile generated successfully at: {profile_path}")
+    
     print_hardware_summary()
     
     # Log starting parameters
@@ -175,6 +276,9 @@ def main():
     logger.info(f"Target model: {config['model']['name']}")
     logger.info(f"Sequence length: {config['dataset']['max_seq_len']}")
     logger.info(f"Sample blocks count limit: {config['dataset']['num_samples']}")
+    logger.info(f"Active Device: {config['model']['device']}")
+    logger.info(f"Batch Size: {config['dataset']['batch_size']}")
+    logger.info(f"Save Raw Samples Limit: {config['storage']['save_raw_samples']}")
     
     # 5. Execute Experiments & Measure Total Duration
     start_perf = time.perf_counter()

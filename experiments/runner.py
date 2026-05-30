@@ -44,9 +44,22 @@ class ExperimentRunner:
         - Computes power law distribution statistics
         - Generates 7 publication figures and research tables
         """
+        import time
+        import io
+        import json
+        
         start_time = pd.Timestamp.now()
         logger.info(f"RSA-X Experiment Start Time: {start_time}")
         logger.info("Starting RSA-X Phase 1 Scientific Experiments...")
+        
+        # Initialize timing accumulators
+        self.perf_timers = {
+            "attention_extraction": 0.0,
+            "metric_computation": 0.0,
+            "tensor_transfer": 0.0,
+            "compression": 0.0,
+            "disk_write": 0.0
+        }
         
         # 1. Load dataset pipeline
         loader = get_dataset_loader(self.config)
@@ -77,7 +90,10 @@ class ExperimentRunner:
             batch_size = input_ids.shape[0]
             
             # Extract attention tensors: [batch_size, num_layers, num_heads, seq_len, seq_len]
+            extract_start = time.perf_counter()
             patterns = self.extractor.extract_batch(input_ids)
+            extract_end = time.perf_counter()
+            self.perf_timers["attention_extraction"] += (extract_end - extract_start)
             
             # Analyze each batch
             entropy_metrics = self.entropy_analyzer.analyze(patterns)
@@ -89,6 +105,13 @@ class ExperimentRunner:
             all_token_entropies.append(entropy_metrics["token_entropy"]) # [batch_size, layers, heads, seq_len]
             all_sparsity_percentages.append(sparsity_metrics["sparsity_percentage"]) # [batch_size, layers, heads]
             all_densities.append(sparsity_metrics["density"]) # [batch_size, layers, heads]
+            
+            # Accumulate analyzer timers
+            self.perf_timers["metric_computation"] += entropy_metrics["timings"]["metric_computation"]
+            self.perf_timers["tensor_transfer"] += entropy_metrics["timings"]["tensor_transfer"]
+            
+            self.perf_timers["metric_computation"] += sparsity_metrics["timings"]["metric_computation"]
+            self.perf_timers["tensor_transfer"] += sparsity_metrics["timings"]["tensor_transfer"]
             
             for k in k_values:
                 all_top_k_masses[f"top_{k}_mass"].append(sparsity_metrics["top_k_masses"][f"top_{k}_mass"])
@@ -106,11 +129,16 @@ class ExperimentRunner:
                     logger.info(f"Saving raw attention weights for sample {global_idx}...")
                     # Extract sample pattern: [num_layers, num_heads, seq_len, seq_len]
                     sample_pattern = patterns[item_idx]
-                    self.extractor.save_raw_attention(sample_pattern, tokens_str, global_idx)
+                    save_res = self.extractor.save_raw_attention(sample_pattern, tokens_str, global_idx)
+                    
+                    # Accumulate save raw timers
+                    self.perf_timers["tensor_transfer"] += save_res["timings"]["tensor_transfer"]
+                    self.perf_timers["compression"] += save_res["timings"]["compression"]
+                    self.perf_timers["disk_write"] += save_res["timings"]["disk_write"]
                     
                     # Keep one sample for figure 1 visualization (middle layer, middle head)
                     if global_idx == 0:
-                        visualize_sample_pattern = sample_pattern.numpy()
+                        visualize_sample_pattern = sample_pattern.cpu().numpy()
                         visualize_sample_tokens = tokens_str
                         visualize_sample_idx = global_idx
                         
@@ -136,13 +164,14 @@ class ExperimentRunner:
         }
         
         # Save consolidated NumPy metrics for offline figure regeneration
-        import time
         npz_path = os.path.join(self.metrics_dir, "consolidated_metrics.npz")
         logger.info(f"save_start: Saving consolidated metrics to {npz_path}...")
-        metrics_start = time.perf_counter()
         
+        # Measure compression
+        compress_start = time.perf_counter()
+        buffer = io.BytesIO()
         np.savez_compressed(
-            npz_path,
+            buffer,
             head_entropy=consolidated["head_entropy"],
             layer_entropy=consolidated["layer_entropy"],
             token_entropy=consolidated["token_entropy"],
@@ -150,9 +179,21 @@ class ExperimentRunner:
             density=consolidated["density"],
             **{f"top_{k}_mass": consolidated["top_k_masses"][f"top_{k}_mass"] for k in k_values}
         )
+        buffer.seek(0)
+        compressed_data = buffer.read()
+        compress_end = time.perf_counter()
+        compression_duration = compress_end - compress_start
+        self.perf_timers["compression"] += compression_duration
         
-        metrics_end = time.perf_counter()
-        metrics_duration = metrics_end - metrics_start
+        # Measure disk write
+        write_start = time.perf_counter()
+        with open(npz_path, "wb") as f:
+            f.write(compressed_data)
+        write_end = time.perf_counter()
+        disk_write_duration = write_end - write_start
+        self.perf_timers["disk_write"] += disk_write_duration
+        
+        metrics_duration = compression_duration + disk_write_duration
         logger.info(f"save_end: Saved consolidated metrics.")
         logger.info(f"save_duration_seconds: {metrics_duration:.4f} seconds for consolidated metrics.")
         
@@ -168,6 +209,7 @@ class ExperimentRunner:
         
         csv_end = time.perf_counter()
         csv_duration = csv_end - csv_start
+        self.perf_timers["disk_write"] += csv_duration
         logger.info(f"save_end: Saved layer-wise summary table.")
         logger.info(f"save_duration_seconds: {csv_duration:.4f} seconds for layerwise summary table.")
         print("\n=== LAYER-WISE SPARSITY & ENTROPY RESEARCH SUMMARY ===")
@@ -257,6 +299,22 @@ class ExperimentRunner:
                 
         # 9. Clean up and finalize
         self.tracker.finish()
+        
+        # Generate performance report file
+        perf_report = {
+            "attention_extraction_time_seconds": round(self.perf_timers["attention_extraction"], 4),
+            "metric_computation_time_seconds": round(self.perf_timers["metric_computation"], 4),
+            "tensor_transfer_time_seconds": round(self.perf_timers["tensor_transfer"], 4),
+            "disk_write_time_seconds": round(self.perf_timers["disk_write"], 4),
+            "compression_time_seconds": round(self.perf_timers["compression"], 4),
+            "total_profiled_time_seconds": round(sum(self.perf_timers.values()), 4)
+        }
+        
+        perf_report_path = os.path.join(self.results_dir, "performance_report.json")
+        with open(perf_report_path, "w") as f:
+            json.dump(perf_report, f, indent=2)
+        logger.info(f"Performance report generated successfully at: {perf_report_path}")
+        
         end_time = pd.Timestamp.now()
         logger.info(f"RSA-X Experiment End Time: {end_time}")
         logger.info(f"Execution Summary: Processed {sample_count} WikiText sample blocks. Model: {self.extractor.model_name}. Mean Sparsity: {mean_sparsity:.4f}%, Mean Entropy: {mean_entropy:.4f} Nat, Mean Density: {mean_density:.4f}.")
