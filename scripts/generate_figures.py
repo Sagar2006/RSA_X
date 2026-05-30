@@ -1,8 +1,9 @@
-import os
 import argparse
 import yaml
 import logging
 import numpy as np
+from pathlib import Path
+from paths import PathManager
 from visualization.plots import PublicationVisualizer
 
 logging.basicConfig(
@@ -12,54 +13,25 @@ logging.basicConfig(
 logger = logging.getLogger("generate_figures")
 
 
-def get_clean_project_root(start_dir: str) -> str:
-    """
-    Cleans and resolves the absolute project root path by detecting 
-    and eliminating repeated nested/duplicate project root folder name occurrences 
-    (such as RSA_X/RSA_X/RSA_X) caused by repeated cell executions or git clones.
-    """
-    drive, tail = os.path.splitdrive(os.path.abspath(start_dir))
-    norm_path = tail.replace("\\", "/")
-    path_parts = [p for p in norm_path.split("/") if p]
-    
-    seen_root_name = False
-    cleaned_parts = []
-    for part in path_parts:
-        is_root_name = part.lower() in ("rsa_x", "rsa-x")
-        if is_root_name:
-            if seen_root_name:
-                continue
-            seen_root_name = True
-        cleaned_parts.append(part)
-        
-    reconstructed = drive + "/" + "/".join(cleaned_parts) if drive else "/" + "/".join(cleaned_parts)
-    return os.path.abspath(reconstructed)
-
-
-def load_yaml_config(config_path: str) -> dict:
-    if not os.path.exists(config_path):
+def load_yaml_config(config_path: Path) -> dict:
+    if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, "r") as f:
         return yaml.safe_load(f) or {}
 
 
-def find_latest_run_dir(results_root: str = None) -> str:
+def find_latest_run_dir(results_root: Path) -> Path:
     """Finds the most recently modified run_ subdirectory in results/."""
-    if results_root is None:
-        script_dir = os.path.abspath(os.path.dirname(__file__))
-        results_root = os.path.abspath(os.path.join(script_dir, "..", "results"))
-        
-    if not os.path.exists(results_root):
+    if not results_root.exists():
         return None
     subdirs = [
-        os.path.join(results_root, d)
-        for d in os.listdir(results_root)
-        if os.path.isdir(os.path.join(results_root, d)) and d.startswith("run_")
+        d for d in results_root.iterdir()
+        if d.is_dir() and d.name.startswith("run_")
     ]
     if not subdirs:
         return None
     # Sort subdirectories by modification time, most recent first
-    subdirs.sort(key=os.path.getmtime, reverse=True)
+    subdirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return subdirs[0]
 
 
@@ -81,43 +53,45 @@ def main():
     args = parser.parse_args()
     
     logger.info("Loading framework configuration...")
+    PROJECT_ROOT = PathManager.get_project_root()
+    
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+        
     try:
-        config = load_yaml_config(args.config)
+        config = load_yaml_config(config_path)
     except Exception as e:
         logger.error(f"Failed to load baseline configuration: {e}")
         return
         
-    # Resolve target run directory absolutely relative to project root
-    SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
-    PROJECT_ROOT = get_clean_project_root(os.path.join(SCRIPT_DIR, ".."))
+    target_run_str = args.run_dir
+    results_root = PathManager.get_results_dir()
     
-    target_run = args.run_dir
-    if not target_run:
+    if not target_run_str:
         logger.info("No --run_dir specified. Scanning for the latest experimental run...")
-        target_run = find_latest_run_dir(os.path.join(PROJECT_ROOT, "results"))
+        target_run = find_latest_run_dir(results_root)
         if not target_run:
             logger.error("No 'results/run_*' subdirectories found. Please execute main.py first.")
             return
-        target_run = get_clean_project_root(target_run)
         logger.info(f"Automatically identified latest run folder: {target_run}")
     else:
-        # Resolve relative run_dir absolutely to project root
-        if not os.path.isabs(target_run):
-            target_run = os.path.abspath(os.path.join(PROJECT_ROOT, target_run))
-        target_run = get_clean_project_root(target_run)
-        if not os.path.exists(target_run):
+        target_run = Path(target_run_str)
+        if not target_run.is_absolute():
+            target_run = PROJECT_ROOT / target_run
+        if not target_run.exists():
             logger.error(f"Target run directory does not exist: {target_run}")
             return
             
     # Apply dynamic directory overrides in config
-    config["storage"]["results_dir"] = target_run
+    config["storage"]["results_dir"] = str(target_run)
     
-    metrics_dir = os.path.join(target_run, config["storage"]["metrics_subdir"])
-    raw_tensors_dir = os.path.join(target_run, config["storage"]["raw_tensors_subdir"])
+    metrics_dir = target_run / config["storage"]["metrics_subdir"]
+    raw_tensors_dir = target_run / config["storage"]["raw_tensors_subdir"]
     
-    npz_path = os.path.join(metrics_dir, "consolidated_metrics.npz")
+    npz_path = metrics_dir / "consolidated_metrics.npz"
     
-    if not os.path.exists(npz_path):
+    if not npz_path.exists():
         logger.error(f"Consolidated metrics file not found: {npz_path}.")
         return
         
@@ -144,16 +118,16 @@ def main():
     
     # 1. Recreate Figure 1: Attention Heatmap (from first saved .npz raw file)
     logger.info("Checking for saved raw attention tensors to regenerate Figure 1...")
-    if os.path.exists(raw_tensors_dir):
-        npz_files = [f for f in os.listdir(raw_tensors_dir) if f.endswith(".npz")]
+    if raw_tensors_dir.exists():
+        npz_files = [f for f in raw_tensors_dir.iterdir() if f.name.endswith(".npz")]
         if npz_files:
-            target_npz = os.path.join(raw_tensors_dir, sorted(npz_files)[0])
+            target_npz = sorted(npz_files)[0]
             logger.info(f"Loading raw attention tensor from {target_npz} for Figure 1...")
             sample_data = np.load(target_npz)
             raw_pattern = sample_data["attention"] # [num_layers, num_heads, seq_len, seq_len]
             tokens = list(sample_data["tokens"])
             
-            sample_idx = int(npz_files[0].split("_")[1].split(".")[0])
+            sample_idx = int(target_npz.stem.split("_")[1])
             
             visualizer.plot_attention_heatmap(
                 raw_pattern[5, 5], 
@@ -200,6 +174,10 @@ def main():
     visualizer.plot_attention_density(consolidated["density"])
     
     logger.info(f"All figures successfully regenerated (PNG + PDF format) and saved to: {visualizer.figures_dir}")
+    print("\n--- STANDALONE TIMING PROFILE REPORT ---")
+    for name, t_dict in visualizer.figure_timings.items():
+        print(f"Figure: {name:<25} | Creation: {t_dict['creation_time']:.4f}s | PNG Save: {t_dict['save_png_time']:.4f}s | PDF Save: {t_dict['save_pdf_time']:.4f}s")
+    print("------------------------------------------\n")
 
 
 if __name__ == "__main__":

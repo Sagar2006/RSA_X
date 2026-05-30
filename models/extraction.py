@@ -4,6 +4,7 @@ import logging
 import torch
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from transformer_lens import HookedTransformer
 
 logger = logging.getLogger(__name__)
@@ -37,9 +38,9 @@ class AttentionExtractor:
         self.num_heads = self.model.cfg.n_heads
         
         # Setup paths
-        self.results_dir = config["storage"]["results_dir"]
-        self.raw_tensors_dir = os.path.join(self.results_dir, config["storage"]["raw_tensors_subdir"])
-        os.makedirs(self.raw_tensors_dir, exist_ok=True)
+        self.results_dir = Path(config["storage"]["results_dir"]).resolve()
+        self.raw_tensors_dir = self.results_dir / config["storage"]["raw_tensors_subdir"]
+        self.raw_tensors_dir.mkdir(parents=True, exist_ok=True)
 
     def extract_batch(self, batch_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -109,8 +110,7 @@ class AttentionExtractor:
         pattern_np = pattern_cpu.numpy().astype(np.float32)
         
         # Base file path
-        base_path = os.path.join(self.raw_tensors_dir, f"sample_{sample_idx}")
-        npz_file = f"{base_path}.npz"
+        npz_file = self.raw_tensors_dir / f"sample_{sample_idx}.npz"
         
         # 2. Measure Compression time (using an in-memory buffer)
         compress_start = time.perf_counter()
@@ -127,7 +127,7 @@ class AttentionExtractor:
         
         # 3. Measure Disk Write time
         write_start = time.perf_counter()
-        with open(npz_file, "wb") as f:
+        with open(str(npz_file), "wb") as f:
             f.write(compressed_data)
         write_end = time.perf_counter()
         disk_write_duration = write_end - write_start
@@ -137,7 +137,7 @@ class AttentionExtractor:
         logger.info(f"save_duration_seconds: {duration:.4f} seconds for sample {sample_idx}.")
         
         return {
-            "npz_size_bytes": os.path.getsize(npz_file),
+            "npz_size_bytes": npz_file.stat().st_size,
             "total_edges": seq_len * seq_len * self.num_layers * self.num_heads,
             "timings": {
                 "tensor_transfer": transfer_duration,

@@ -6,6 +6,8 @@ import datetime
 import time
 import json
 import torch
+from pathlib import Path
+from paths import PathManager
 from hardware import get_hardware_diagnostics, print_hardware_summary
 from experiments.runner import ExperimentRunner
 
@@ -13,9 +15,9 @@ from experiments.runner import ExperimentRunner
 # once the isolated timestamped directories are established.
 logger = logging.getLogger("rsa_x")
 
-def load_yaml_config(config_path: str) -> dict:
+def load_yaml_config(config_path: Path) -> dict:
     """Loads a YAML configuration from disk."""
-    if not os.path.exists(config_path):
+    if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     with open(config_path, "r") as f:
         return yaml.safe_load(f) or {}
@@ -31,30 +33,6 @@ def merge_configs(base: dict, override: dict) -> dict:
     return base
 
 
-def get_clean_project_root(start_dir: str) -> str:
-    """
-    Cleans and resolves the absolute project root path by detecting 
-    and eliminating repeated nested/duplicate project root folder name occurrences 
-    (such as RSA_X/RSA_X/RSA_X) caused by repeated cell executions or git clones.
-    """
-    drive, tail = os.path.splitdrive(os.path.abspath(start_dir))
-    norm_path = tail.replace("\\", "/")
-    path_parts = [p for p in norm_path.split("/") if p]
-    
-    seen_root_name = False
-    cleaned_parts = []
-    for part in path_parts:
-        is_root_name = part.lower() in ("rsa_x", "rsa-x")
-        if is_root_name:
-            if seen_root_name:
-                continue
-            seen_root_name = True
-        cleaned_parts.append(part)
-        
-    reconstructed = drive + "/" + "/".join(cleaned_parts) if drive else "/" + "/".join(cleaned_parts)
-    return os.path.abspath(reconstructed)
-
-
 def get_git_commit() -> str:
     """Retrieves the current git commit hash safely. Falls back if git is not initialized."""
     try:
@@ -67,7 +45,7 @@ def get_git_commit() -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="RSA-X: Reinforced Sparse Attention Experimental Framework (Phase 1.5)"
+        description="RSA-X: Reinforced Sparse Attention Experimental Framework (Phase 1.6)"
     )
     parser.add_argument(
         "--config", 
@@ -105,7 +83,8 @@ def main():
     args = parser.parse_args()
     
     # 1. Configuration Cascading Merge
-    default_config_path = os.path.join("configs", "default_config.yaml")
+    PROJECT_ROOT = PathManager.get_project_root()
+    default_config_path = PathManager.get_configs_dir() / "default_config.yaml"
     
     # Load default baseline
     try:
@@ -117,7 +96,10 @@ def main():
     # Apply secondary environment profile configuration
     if args.config is not None:
         try:
-            override_config = load_yaml_config(args.config)
+            config_path = Path(args.config)
+            if not config_path.is_absolute():
+                config_path = PROJECT_ROOT / config_path
+            override_config = load_yaml_config(config_path)
             config = merge_configs(config, override_config)
             print(f"Successfully cascade-merged configuration from: {args.config}")
         except Exception as e:
@@ -136,32 +118,30 @@ def main():
         config["storage"]["save_raw_samples"] = args.save_raw_samples
         
     # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
-    current_file_dir = os.path.abspath(os.path.dirname(__file__))
-    PROJECT_ROOT = get_clean_project_root(current_file_dir)
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     run_folder = f"run_{timestamp}"
-    run_dir = get_clean_project_root(os.path.abspath(os.path.join(PROJECT_ROOT, "results", run_folder)))
+    run_dir = PathManager.get_results_dir() / run_folder
     
     # Create isolated folders
-    figures_dir = os.path.join(run_dir, "figures")
-    metrics_dir = os.path.join(run_dir, "metrics")
-    logs_dir = os.path.join(run_dir, "logs")
+    figures_dir = run_dir / "figures"
+    metrics_dir = run_dir / "metrics"
+    logs_dir = run_dir / "logs"
     
-    os.makedirs(figures_dir, exist_ok=True)
-    os.makedirs(metrics_dir, exist_ok=True)
-    os.makedirs(logs_dir, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
     
     # Set run directory dynamically in config
-    config["storage"]["results_dir"] = run_dir
+    config["storage"]["results_dir"] = str(run_dir)
     
     # 3. Dynamic Logging System Reconfiguration
-    log_file = os.path.join(logs_dir, "experiment.log")
+    log_file = logs_dir / "experiment.log"
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_file, mode="w", encoding="utf-8")
+            logging.FileHandler(str(log_file), mode="w", encoding="utf-8")
         ],
         force=True  # Force reconfiguration of baseline root logger
     )
@@ -264,7 +244,7 @@ def main():
         "execution_mode": selected_mode
     }
     
-    profile_path = os.path.join(run_dir, "hardware_profile.json")
+    profile_path = run_dir / "hardware_profile.json"
     with open(profile_path, "w") as f:
         json.dump(hardware_profile, f, indent=2)
     logger.info(f"Hardware profile generated successfully at: {profile_path}")
@@ -304,7 +284,7 @@ def main():
             "execution_time_seconds": round(exec_duration, 4)
         }
         
-        metadata_file = os.path.join(run_dir, "experiment_metadata.json")
+        metadata_file = run_dir / "experiment_metadata.json"
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
             

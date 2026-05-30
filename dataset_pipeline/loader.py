@@ -32,6 +32,7 @@ def get_dataset_loader(config: dict) -> DataLoader:
     Returns:
         DataLoader: PyTorch DataLoader yielding batches of shape [batch_size, max_seq_len].
     """
+    import time
     dataset_name = config["dataset"]["name"]
     dataset_config = config["dataset"]["config"]
     split = config["dataset"]["split"]
@@ -47,13 +48,17 @@ def get_dataset_loader(config: dict) -> DataLoader:
         
     logger.info(f"Loading dataset {dataset_name} ({dataset_config}), split: {split}...")
     # Load dataset. Fallback to wikitext-2 if 103 fails or for offline tests if requested.
+    load_start = time.perf_counter()
     try:
         dataset = load_dataset(dataset_name, dataset_config, split=split)
     except Exception as e:
         logger.warning(f"Failed to load {dataset_config} due to: {e}. Falling back to wikitext-2-raw-v1...")
         dataset = load_dataset(dataset_name, "wikitext-2-raw-v1", split=split)
+    load_end = time.perf_counter()
+    dataset_load_time = load_end - load_start
         
     logger.info(f"Tokenizing split '{split}'...")
+    tokenize_start = time.perf_counter()
     
     # Define tokenization helper
     def tokenize_function(examples):
@@ -82,6 +87,9 @@ def get_dataset_loader(config: dict) -> DataLoader:
         if len(token_blocks) >= num_samples:
             break
             
+    tokenize_end = time.perf_counter()
+    tokenization_time = tokenize_end - tokenize_start
+    
     # Check if we have enough blocks
     actual_blocks = len(token_blocks)
     logger.info(f"Created {actual_blocks} sequence blocks of length {max_seq_len} (Limit: {num_samples})")
@@ -102,5 +110,9 @@ def get_dataset_loader(config: dict) -> DataLoader:
         shuffle=False,
         drop_last=False
     )
+    
+    # Attach timings as custom attributes
+    loader.dataset_load_time = dataset_load_time
+    loader.tokenization_time = tokenization_time
     
     return loader
