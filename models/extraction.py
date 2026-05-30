@@ -102,12 +102,20 @@ class AttentionExtractor:
         npz_file = f"{base_path}.npz"
         
         # Save both attention matrix and token strings in a single compressed NPZ binary file
+        import time
+        logger.info(f"save_start: Saving raw attention for sample {sample_idx}...")
+        start_time = time.perf_counter()
+        
         np.savez_compressed(
             npz_file,
             attention=pattern_np,
             tokens=np.array(tokens)
         )
-        logger.info(f"Saved raw attention tensor as compressed NumPy NPZ: {npz_file}")
+        
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        logger.info(f"save_end: Saved raw attention for sample {sample_idx}.")
+        logger.info(f"save_duration_seconds: {duration:.4f} seconds for sample {sample_idx}.")
         
         return {
             "npz_size_bytes": os.path.getsize(npz_file),

@@ -31,6 +31,30 @@ def merge_configs(base: dict, override: dict) -> dict:
     return base
 
 
+def get_clean_project_root(start_dir: str) -> str:
+    """
+    Cleans and resolves the absolute project root path by detecting 
+    and eliminating repeated nested/duplicate project root folder name occurrences 
+    (such as RSA_X/RSA_X/RSA_X) caused by repeated cell executions or git clones.
+    """
+    drive, tail = os.path.splitdrive(os.path.abspath(start_dir))
+    norm_path = tail.replace("\\", "/")
+    path_parts = [p for p in norm_path.split("/") if p]
+    
+    seen_root_name = False
+    cleaned_parts = []
+    for part in path_parts:
+        is_root_name = part.lower() in ("rsa_x", "rsa-x")
+        if is_root_name:
+            if seen_root_name:
+                continue
+            seen_root_name = True
+        cleaned_parts.append(part)
+        
+    reconstructed = drive + "/" + "/".join(cleaned_parts) if drive else "/" + "/".join(cleaned_parts)
+    return os.path.abspath(reconstructed)
+
+
 def get_git_commit() -> str:
     """Retrieves the current git commit hash safely. Falls back if git is not initialized."""
     try:
@@ -112,10 +136,11 @@ def main():
         config["storage"]["save_raw_samples"] = args.save_raw_samples
         
     # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
-    PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+    current_file_dir = os.path.abspath(os.path.dirname(__file__))
+    PROJECT_ROOT = get_clean_project_root(current_file_dir)
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     run_folder = f"run_{timestamp}"
-    run_dir = os.path.abspath(os.path.join(PROJECT_ROOT, "results", run_folder))
+    run_dir = get_clean_project_root(os.path.abspath(os.path.join(PROJECT_ROOT, "results", run_folder)))
     
     # Create isolated folders
     figures_dir = os.path.join(run_dir, "figures")

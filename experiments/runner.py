@@ -115,6 +115,11 @@ class ExperimentRunner:
                         visualize_sample_idx = global_idx
                         
                 sample_count += 1
+            
+            # Dynamic batch progress tracking to prevent silent stall illusion
+            total_samples = len(loader.dataset)
+            percent = (sample_count / total_samples) * 100
+            logger.info(f"Batched Profiling Progress: {sample_count}/{total_samples} samples processed ({percent:.1f}%)...")
                 
         # 3. Consolidate and aggregate metrics over the dataset
         logger.info("Consolidating dataset-wide scientific statistics...")
@@ -131,7 +136,11 @@ class ExperimentRunner:
         }
         
         # Save consolidated NumPy metrics for offline figure regeneration
+        import time
         npz_path = os.path.join(self.metrics_dir, "consolidated_metrics.npz")
+        logger.info(f"save_start: Saving consolidated metrics to {npz_path}...")
+        metrics_start = time.perf_counter()
+        
         np.savez_compressed(
             npz_path,
             head_entropy=consolidated["head_entropy"],
@@ -141,14 +150,26 @@ class ExperimentRunner:
             density=consolidated["density"],
             **{f"top_{k}_mass": consolidated["top_k_masses"][f"top_{k}_mass"] for k in k_values}
         )
-        logger.info(f"Saved dataset consolidated metrics as compressed NPZ: {npz_path}")
+        
+        metrics_end = time.perf_counter()
+        metrics_duration = metrics_end - metrics_start
+        logger.info(f"save_end: Saved consolidated metrics.")
+        logger.info(f"save_duration_seconds: {metrics_duration:.4f} seconds for consolidated metrics.")
         
         # 4. Generate Research Tables (Module 5)
         logger.info("Generating scientific layer-wise comparison tables...")
         summary_table = generate_summary_tables(consolidated)
         summary_csv = os.path.join(self.metrics_dir, "layerwise_summary_table.csv")
+        
+        logger.info(f"save_start: Saving layer-wise summary table to {summary_csv}...")
+        csv_start = time.perf_counter()
+        
         summary_table.to_csv(summary_csv, index=False)
-        logger.info(f"Research summary table saved to: {summary_csv}")
+        
+        csv_end = time.perf_counter()
+        csv_duration = csv_end - csv_start
+        logger.info(f"save_end: Saved layer-wise summary table.")
+        logger.info(f"save_duration_seconds: {csv_duration:.4f} seconds for layerwise summary table.")
         print("\n=== LAYER-WISE SPARSITY & ENTROPY RESEARCH SUMMARY ===")
         print(summary_table.to_string(index=False))
         print("========================================================\n")

@@ -11,6 +11,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("generate_figures")
 
+
+def get_clean_project_root(start_dir: str) -> str:
+    """
+    Cleans and resolves the absolute project root path by detecting 
+    and eliminating repeated nested/duplicate project root folder name occurrences 
+    (such as RSA_X/RSA_X/RSA_X) caused by repeated cell executions or git clones.
+    """
+    drive, tail = os.path.splitdrive(os.path.abspath(start_dir))
+    norm_path = tail.replace("\\", "/")
+    path_parts = [p for p in norm_path.split("/") if p]
+    
+    seen_root_name = False
+    cleaned_parts = []
+    for part in path_parts:
+        is_root_name = part.lower() in ("rsa_x", "rsa-x")
+        if is_root_name:
+            if seen_root_name:
+                continue
+            seen_root_name = True
+        cleaned_parts.append(part)
+        
+    reconstructed = drive + "/" + "/".join(cleaned_parts) if drive else "/" + "/".join(cleaned_parts)
+    return os.path.abspath(reconstructed)
+
+
 def load_yaml_config(config_path: str) -> dict:
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -64,7 +89,7 @@ def main():
         
     # Resolve target run directory absolutely relative to project root
     SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
-    PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+    PROJECT_ROOT = get_clean_project_root(os.path.join(SCRIPT_DIR, ".."))
     
     target_run = args.run_dir
     if not target_run:
@@ -73,11 +98,13 @@ def main():
         if not target_run:
             logger.error("No 'results/run_*' subdirectories found. Please execute main.py first.")
             return
+        target_run = get_clean_project_root(target_run)
         logger.info(f"Automatically identified latest run folder: {target_run}")
     else:
         # Resolve relative run_dir absolutely to project root
         if not os.path.isabs(target_run):
             target_run = os.path.abspath(os.path.join(PROJECT_ROOT, target_run))
+        target_run = get_clean_project_root(target_run)
         if not os.path.exists(target_run):
             logger.error(f"Target run directory does not exist: {target_run}")
             return
