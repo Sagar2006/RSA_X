@@ -40,6 +40,7 @@ class PublicationVisualizer:
     """
     Attention Visualization System.
     Generates 300 DPI, publication-ready research figures based on transformer attention weights.
+    Supports dual-format export in PNG and PDF (vector graphics).
     """
     def __init__(self, config: dict):
         self.config = config
@@ -51,7 +52,24 @@ class PublicationVisualizer:
         
         self.cmap_attn = config["visualization"]["cmap_attention"]
         self.cmap_heatmap = config["visualization"]["cmap_heatmap"]
-        self.img_format = config["visualization"]["format"]
+        self.dpi = config["visualization"]["dpi"]
+        self.img_format = config["visualization"].get("format", "png")
+
+    def save_figure(self, filename_base: str):
+        """
+        Helper method to save the currently active figure as both 
+        high-resolution PNG and vector PDF for print-ready publications.
+        """
+        png_path = os.path.join(self.figures_dir, f"{filename_base}.png")
+        pdf_path = os.path.join(self.figures_dir, f"{filename_base}.pdf")
+        
+        # Save PNG
+        plt.savefig(png_path, dpi=self.dpi, format="png", bbox_inches='tight')
+        # Save vector PDF (perfect for zooming/scaling in papers)
+        plt.savefig(pdf_path, dpi=self.dpi, format="pdf", bbox_inches='tight')
+        
+        plt.close()
+        logger.info(f"Saved figure: {png_path} | {pdf_path}")
 
     def plot_attention_heatmap(self, attention_matrix: np.ndarray, tokens: list, layer: int, head: int, sample_idx: int):
         """
@@ -81,11 +99,7 @@ class PublicationVisualizer:
             ax.set_ylabel("Query Position")
             
         ax.set_title(f"Attention Map: Layer {layer}, Head {head} (Sample {sample_idx})")
-        
-        save_path = os.path.join(self.figures_dir, f"fig1_attention_heatmap_L{layer}_H{head}_S{sample_idx}.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 1 (Attention Heatmap): {save_path}")
+        self.save_figure(f"fig1_attention_heatmap_L{layer}_H{head}_S{sample_idx}")
 
     def plot_entropy_histogram(self, token_entropy: np.ndarray, max_entropy: float):
         """
@@ -108,10 +122,7 @@ class PublicationVisualizer:
         plt.title("Distribution of Attention Entropy across Query Positions")
         plt.legend(loc="upper left")
         
-        save_path = os.path.join(self.figures_dir, f"fig2_entropy_histogram.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 2 (Entropy Histogram): {save_path}")
+        self.save_figure("fig2_entropy_histogram")
 
     def plot_sparsity_histogram(self, sparsity_percentage: np.ndarray):
         """
@@ -131,10 +142,7 @@ class PublicationVisualizer:
         plt.title("Distribution of Attention Sparsity")
         plt.legend(loc="upper left")
         
-        save_path = os.path.join(self.figures_dir, f"fig3_sparsity_histogram.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 3 (Sparsity Histogram): {save_path}")
+        self.save_figure("fig3_sparsity_histogram")
 
     def plot_top_k_curve(self, top_k_masses: dict):
         """
@@ -166,10 +174,7 @@ class PublicationVisualizer:
         plt.title("Cumulative Attention Mass Concentration Curves")
         plt.legend(loc="lower right")
         
-        save_path = os.path.join(self.figures_dir, f"fig4_top_k_curve.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 4 (Top-K Curve): {save_path}")
+        self.save_figure("fig4_top_k_curve")
 
     def plot_layerwise_comparison(self, head_entropy: np.ndarray, sparsity_percentage: np.ndarray):
         """
@@ -199,11 +204,7 @@ class PublicationVisualizer:
         axes[1].set_title("Head Sparsity Distribution by Layer")
         
         plt.suptitle("Layer-wise Attention Behavior Comparison", y=0.98, fontsize=14)
-        
-        save_path = os.path.join(self.figures_dir, f"fig5_layerwise_comparison.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 5 (Layerwise Comparison): {save_path}")
+        self.save_figure("fig5_layerwise_comparison")
 
     def plot_headwise_comparison(self, head_entropy: np.ndarray, sparsity_percentage: np.ndarray):
         """
@@ -245,11 +246,7 @@ class PublicationVisualizer:
         axes[1].set_title("Layer vs. Head Average Attention Sparsity (%)")
         
         plt.suptitle("Head-level Specialized Attention Profiling", y=0.98, fontsize=14)
-        
-        save_path = os.path.join(self.figures_dir, f"fig6_headwise_comparison.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 6 (Headwise Comparison): {save_path}")
+        self.save_figure("fig6_headwise_comparison")
 
     def plot_attention_density(self, density_data: np.ndarray):
         """
@@ -269,7 +266,4 @@ class PublicationVisualizer:
         plt.title("Distribution of Attention Density (Key weights > 1/L)")
         plt.legend(loc="upper right")
         
-        save_path = os.path.join(self.figures_dir, f"fig7_attention_density.{self.img_format}")
-        plt.savefig(save_path, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Saved Figure 7 (Attention Density): {save_path}")
+        self.save_figure("fig7_attention_density")

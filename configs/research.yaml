@@ -1,0 +1,12 @@
+# RSA-X Research Configuration Override (Full-Scale Analysis)
+
+dataset:
+  num_samples: 100              # Standard representative dataset scale
+  max_seq_len: 256               # Baseline GPT-2 sequence length
+  batch_size: 2                 # Stable batch size for standard consumer GPUs
+
+model:
+  device: "auto"                # Detect CUDA acceleration automatically
+
+storage:
+  save_raw_samples: 5           # standard target raw sample extraction limit

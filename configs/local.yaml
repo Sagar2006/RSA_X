@@ -1,0 +1,12 @@
+# RSA-X Local Configuration Override (CPU Friendly)
+
+dataset:
+  num_samples: 25               # Limit samples for fast execution
+  max_seq_len: 128               # CPU friendly sequence length
+  batch_size: 1                 # Minimum memory batch footprint
+
+model:
+  device: "cpu"                 # Force CPU execution
+
+storage:
+  save_raw_samples: 2           # Limit disk footprint for raw tensors

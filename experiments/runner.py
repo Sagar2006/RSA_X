@@ -44,6 +44,8 @@ class ExperimentRunner:
         - Computes power law distribution statistics
         - Generates 7 publication figures and research tables
         """
+        start_time = pd.Timestamp.now()
+        logger.info(f"RSA-X Experiment Start Time: {start_time}")
         logger.info("Starting RSA-X Phase 1 Scientific Experiments...")
         
         # 1. Load dataset pipeline
@@ -234,6 +236,9 @@ class ExperimentRunner:
                 
         # 9. Clean up and finalize
         self.tracker.finish()
+        end_time = pd.Timestamp.now()
+        logger.info(f"RSA-X Experiment End Time: {end_time}")
+        logger.info(f"Execution Summary: Processed {sample_count} WikiText sample blocks. Model: {self.extractor.model_name}. Mean Sparsity: {mean_sparsity:.4f}%, Mean Entropy: {mean_entropy:.4f} Nat, Mean Density: {mean_density:.4f}.")
         logger.info("RSA-X Phase 1 Scientific Experiments completed successfully.")
         
         return {
