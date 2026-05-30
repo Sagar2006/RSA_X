@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# pytest cache
+.pytest_cache/
+
+# Logs
+*.log
+
+# Generated results and data
+results/
+wandb/
+
+# Local runtime files
+rsa_x_execution.log

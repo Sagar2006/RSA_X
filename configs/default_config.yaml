@@ -1,0 +1,45 @@
+# RSA-X (Reinforced Sparse Attention eXperimental Framework) Configuration
+
+# Model settings
+model:
+  name: "gpt2"             # GPT2-small, mapping to "gpt2" in TransformerLens
+  pretrained: true
+  device: "auto"           # "auto" (detect cuda/cpu), "cuda", or "cpu"
+
+# Dataset settings
+dataset:
+  name: "wikitext"
+  config: "wikitext-103-raw-v1"  # Uses the raw WikiText-103 dataset
+  split: "test"                  # We analyze the test split for natural sparsity
+  max_seq_len: 256               # Max sequence length for attention analysis
+  batch_size: 4                  # Batch size for evaluation
+  num_samples: 50                # Total number of text samples to analyze for natural sparsity
+
+# Analysis settings
+analysis:
+  epsilon: 1e-12                 # Numerical stability factor for log computations
+  top_k_values: [1, 5, 10, 50]   # K values for cumulative mass calculation
+  density_threshold: 0.00390625  # Threshold for attention density (1/256)
+  near_zero_threshold: 0.0001    # Threshold for near-zero attention calculation
+
+# Visualization settings
+visualization:
+  dpi: 300
+  style: "seaborn-v0_8-whitegrid"
+  cmap_attention: "rocket"
+  cmap_heatmap: "viridis"
+  format: "png"
+
+# Experiment Tracking (Weights & Biases)
+wandb:
+  project: "rsa-x-phase-1"
+  mode: "offline"                # "online" or "offline" (run locally without W&B credentials)
+  group: "natural-sparsity-gpt2"
+
+# Storage paths
+storage:
+  results_dir: "results"
+  raw_tensors_subdir: "raw_tensors"
+  metrics_subdir: "metrics"
+  figures_subdir: "figures"
+  save_raw_samples: 5            # Number of specific samples to save full raw attention tensors for
