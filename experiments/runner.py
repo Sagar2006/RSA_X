@@ -251,28 +251,130 @@ class ExperimentRunner:
             
         logger.info(f"Consolidated Metrics Saving Benchmark Profile: {json.dumps(bench_results, indent=2)}")
         
-        # 5. Save Optimized Consolidated Metrics (< 5 seconds and small size)
-        # Downsample sequence/query positions by 4x and cast to float16 to reduce size by 8x
-        token_entropy_opt = consolidated["token_entropy"][..., ::4].astype(np.float16)
-        sparsity_opt = consolidated["sparsity_percentage"][..., ::4].astype(np.float16)
-        density_opt = consolidated["density"][..., ::4].astype(np.float16)
-        top_k_masses_opt = {}
-        for k in k_values:
-            top_k_masses_opt[f"top_{k}_mass"] = consolidated["top_k_masses"][f"top_{k}_mass"][..., ::4].astype(np.float16)
-            
+        # 5. Save Consolidated Metrics
         npz_path = self.metrics_dir / "consolidated_metrics.npz"
-        logger.info(f"save_start: Saving consolidated metrics optimized to {npz_path}...")
+        save_full_metrics = self.config["storage"].get("save_full_metrics", False)
+        
         save_metrics_start = time.perf_counter()
         
-        np.savez(
-            npz_path,
-            head_entropy=consolidated["head_entropy"].astype(np.float32),
-            layer_entropy=consolidated["layer_entropy"].astype(np.float32),
-            token_entropy=token_entropy_opt,
-            sparsity_percentage=sparsity_opt,
-            density=density_opt,
-            **{f"top_{k}_mass": top_k_masses_opt[f"top_{k}_mass"] for k in k_values}
-        )
+        if not save_full_metrics:
+            logger.info(f"save_start: Saving consolidated metrics in LIGHTWEIGHT mode to {npz_path}...")
+            # Downsample sequence/query positions by 4x for flat arrays (consistent with default compression)
+            token_entropy_4x = consolidated["token_entropy"][..., ::4]
+            sparsity_4x = consolidated["sparsity_percentage"][..., ::4]
+            density_4x = consolidated["density"][..., ::4]
+            
+            # Local downsample helper
+            def local_downsample(arr, max_pts=50000):
+                flat = arr.flatten()
+                if len(flat) > max_pts:
+                    step = len(flat) // max_pts
+                    return flat[::step]
+                return flat
+            
+            # Pre-compute lightweight flat arrays
+            token_entropy_flat = local_downsample(token_entropy_4x, 50000).astype(np.float16)
+            sparsity_flat = local_downsample(sparsity_4x, 50000).astype(np.float16)
+            density_flat = local_downsample(density_4x, 50000).astype(np.float16)
+            
+            # Sparsity layerwise flat (boxplots): downsample to 10,000 points per layer
+            sparsity_layer_flat_list = []
+            for layer in range(self.num_layers):
+                layer_sparsity = sparsity_4x[:, layer, :]
+                sparsity_layer_flat_list.append(local_downsample(layer_sparsity, 10000).astype(np.float16))
+            sparsity_layer_flat = np.stack(sparsity_layer_flat_list, axis=0) # [num_layers, 10000]
+            
+            # Sparsity pre-averaged grids
+            sparsity_head_mean = sparsity_4x.mean(axis=(0, 3)).astype(np.float32)
+            sparsity_layer_mean = sparsity_4x.mean(axis=(0, 2, 3)).astype(np.float32)
+            
+            # Density pre-averaged layer mean
+            density_layer_mean = density_4x.mean(axis=(0, 2, 3)).astype(np.float32)
+            
+            # Precompute Top-K stats
+            top_k_lightweight = {}
+            for k in k_values:
+                k_mass_4x = consolidated["top_k_masses"][f"top_{k}_mass"][..., ::4]
+                top_k_lightweight[f"top_{k}_mass_mean"] = np.mean(k_mass_4x).astype(np.float32)
+                top_k_lightweight[f"top_{k}_mass_std"] = np.std(k_mass_4x).astype(np.float32)
+                top_k_lightweight[f"top_{k}_mass_min"] = np.min(k_mass_4x).astype(np.float32)
+                top_k_lightweight[f"top_{k}_mass_max"] = np.max(k_mass_4x).astype(np.float32)
+                top_k_lightweight[f"top_{k}_mass_layer_mean"] = k_mass_4x.mean(axis=(0, 2, 3)).astype(np.float32)
+                
+            np.savez(
+                npz_path,
+                is_lightweight=np.array(True),
+                head_entropy=consolidated["head_entropy"].astype(np.float32),
+                layer_entropy=consolidated["layer_entropy"].astype(np.float32),
+                token_entropy_flat=token_entropy_flat,
+                token_entropy_mean=np.array(np.mean(token_entropy_4x), dtype=np.float32),
+                token_entropy_seq_len=np.array(token_entropy_4x.shape[3], dtype=np.int32),
+                sparsity_flat=sparsity_flat,
+                sparsity_layer_flat=sparsity_layer_flat,
+                sparsity_mean=np.array(np.mean(sparsity_4x), dtype=np.float32),
+                sparsity_min=np.array(np.min(sparsity_4x), dtype=np.float32),
+                sparsity_max=np.array(np.max(sparsity_4x), dtype=np.float32),
+                sparsity_head_mean=sparsity_head_mean,
+                sparsity_layer_mean=sparsity_layer_mean,
+                density_flat=density_flat,
+                density_mean=np.array(np.mean(density_4x), dtype=np.float32),
+                density_min=np.array(np.min(density_4x), dtype=np.float32),
+                density_max=np.array(np.max(density_4x), dtype=np.float32),
+                density_layer_mean=density_layer_mean,
+                **top_k_lightweight
+            )
+            
+            # Reconstruct consolidated dictionary in lightweight schema
+            consolidated = {
+                "is_lightweight": True,
+                "head_entropy": consolidated["head_entropy"].astype(np.float32),
+                "layer_entropy": consolidated["layer_entropy"].astype(np.float32),
+                "token_entropy": token_entropy_flat,
+                "token_entropy_mean": np.mean(token_entropy_4x),
+                "token_entropy_seq_len": token_entropy_4x.shape[3],
+                "sparsity_percentage": sparsity_layer_flat,
+                "sparsity_flat": sparsity_flat,
+                "sparsity_mean": np.mean(sparsity_4x),
+                "sparsity_min": np.min(sparsity_4x),
+                "sparsity_max": np.max(sparsity_4x),
+                "sparsity_head_mean": sparsity_head_mean,
+                "sparsity_layer_mean": sparsity_layer_mean,
+                "density": density_flat,
+                "density_mean": np.mean(density_4x),
+                "density_min": np.min(density_4x),
+                "density_max": np.max(density_4x),
+                "density_layer_mean": density_layer_mean,
+                "top_k_masses": {
+                    f"top_{k}_mass": {
+                        "mean": top_k_lightweight[f"top_{k}_mass_mean"],
+                        "std": top_k_lightweight[f"top_{k}_mass_std"],
+                        "min": top_k_lightweight[f"top_{k}_mass_min"],
+                        "max": top_k_lightweight[f"top_{k}_mass_max"],
+                        "layer_mean": top_k_lightweight[f"top_{k}_mass_layer_mean"]
+                    }
+                    for k in k_values
+                }
+            }
+        else:
+            logger.info(f"save_start: Saving consolidated metrics FULL mode to {npz_path}...")
+            token_entropy_opt = consolidated["token_entropy"][..., ::4].astype(np.float16)
+            sparsity_opt = consolidated["sparsity_percentage"][..., ::4].astype(np.float16)
+            density_opt = consolidated["density"][..., ::4].astype(np.float16)
+            top_k_masses_opt = {}
+            for k in k_values:
+                top_k_masses_opt[f"top_{k}_mass"] = consolidated["top_k_masses"][f"top_{k}_mass"][..., ::4].astype(np.float16)
+                
+            np.savez(
+                npz_path,
+                is_lightweight=np.array(False),
+                head_entropy=consolidated["head_entropy"].astype(np.float32),
+                layer_entropy=consolidated["layer_entropy"].astype(np.float32),
+                token_entropy=token_entropy_opt,
+                sparsity_percentage=sparsity_opt,
+                density=density_opt,
+                **{f"top_{k}_mass": top_k_masses_opt[f"top_{k}_mass"] for k in k_values}
+            )
+            
         save_metrics_end = time.perf_counter()
         metrics_save_time = save_metrics_end - save_metrics_start
         self.perf_timers["disk_write"] += metrics_save_time
@@ -309,9 +411,14 @@ class ExperimentRunner:
             })
             
         # 8. Logging to W&B
-        mean_sparsity = consolidated["sparsity_percentage"].mean().item()
-        mean_entropy = consolidated["head_entropy"].mean().item()
-        mean_density = consolidated["density"].mean().item()
+        if consolidated.get("is_lightweight", False):
+            mean_sparsity = consolidated["sparsity_mean"]
+            mean_entropy = consolidated["head_entropy"].mean().item()
+            mean_density = consolidated["density_mean"]
+        else:
+            mean_sparsity = consolidated["sparsity_percentage"].mean().item()
+            mean_entropy = consolidated["head_entropy"].mean().item()
+            mean_density = consolidated["density"].mean().item()
         
         self.tracker.log_metrics({
             "dataset_mean_sparsity_pct": mean_sparsity,
@@ -319,7 +426,10 @@ class ExperimentRunner:
             "dataset_mean_density": mean_density
         })
         for k in k_values:
-            k_mass_mean = consolidated["top_k_masses"][f"top_{k}_mass"].mean().item()
+            if consolidated.get("is_lightweight", False):
+                k_mass_mean = consolidated["top_k_masses"][f"top_{k}_mass"]["mean"]
+            else:
+                k_mass_mean = consolidated["top_k_masses"][f"top_{k}_mass"].mean().item()
             self.tracker.log_metrics({f"dataset_mean_top_{k}_mass": k_mass_mean})
             
         # 9. Independent Figure Profiling and Generation
@@ -335,12 +445,25 @@ class ExperimentRunner:
                 sample_idx=visualize_sample_idx
             )
             
-        self.visualizer.plot_entropy_histogram(consolidated["token_entropy"], np.log(self.config["dataset"]["max_seq_len"]))
-        self.visualizer.plot_sparsity_histogram(consolidated["sparsity_percentage"])
+        self.visualizer.plot_entropy_histogram(
+            consolidated["token_entropy"], 
+            np.log(self.config["dataset"]["max_seq_len"]), 
+            mean_entropy=consolidated.get("token_entropy_mean")
+        )
+        self.visualizer.plot_sparsity_histogram(
+            consolidated["sparsity_flat"] if consolidated.get("is_lightweight", False) else consolidated["sparsity_percentage"],
+            mean_sparsity=consolidated.get("sparsity_mean")
+        )
         self.visualizer.plot_top_k_curve(consolidated["top_k_masses"])
         self.visualizer.plot_layerwise_comparison(consolidated["head_entropy"], consolidated["sparsity_percentage"])
-        self.visualizer.plot_headwise_comparison(consolidated["head_entropy"], consolidated["sparsity_percentage"])
-        self.visualizer.plot_attention_density(consolidated["density"])
+        self.visualizer.plot_headwise_comparison(
+            consolidated["head_entropy"], 
+            consolidated["sparsity_head_mean"] if consolidated.get("is_lightweight", False) else consolidated["sparsity_percentage"]
+        )
+        self.visualizer.plot_attention_density(
+            consolidated["density"],
+            mean_density=consolidated.get("density_mean")
+        )
         
         fig_gen_end = time.perf_counter()
         figure_generation_time = fig_gen_end - fig_gen_start
@@ -438,28 +561,58 @@ class ExperimentRunner:
         }
         
         # 2. Sparsity Validation
-        sparsity = consolidated["sparsity_percentage"]
-        check_finite_and_nan(sparsity, "Sparsity Percentage")
-        if (sparsity < 0.0).any() or (sparsity > 100.0).any():
-            raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Sparsity values out of [0, 100]% range! Min: {sparsity.min()}, Max: {sparsity.max()}")
-        validation_results["sparsity_valid"] = {
-            "status": "PASSED",
-            "min_val": float(sparsity.min()),
-            "max_val": float(sparsity.max()),
-            "mean_val": float(sparsity.mean())
-        }
+        if consolidated.get("is_lightweight", False):
+            s_min = consolidated["sparsity_min"]
+            s_max = consolidated["sparsity_max"]
+            s_mean = consolidated["sparsity_mean"]
+            if np.isnan(s_mean) or not np.isfinite(s_mean):
+                raise ValueError("CRITICAL RESEARCH VALIDATION ERROR: NaN/Infinite sparsity detected!")
+            if s_min < 0.0 or s_max > 100.0:
+                raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Sparsity values out of [0, 100]% range! Min: {s_min}, Max: {s_max}")
+            validation_results["sparsity_valid"] = {
+                "status": "PASSED",
+                "min_val": float(s_min),
+                "max_val": float(s_max),
+                "mean_val": float(s_mean)
+            }
+        else:
+            sparsity = consolidated["sparsity_percentage"]
+            check_finite_and_nan(sparsity, "Sparsity Percentage")
+            if (sparsity < 0.0).any() or (sparsity > 100.0).any():
+                raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Sparsity values out of [0, 100]% range! Min: {sparsity.min()}, Max: {sparsity.max()}")
+            validation_results["sparsity_valid"] = {
+                "status": "PASSED",
+                "min_val": float(sparsity.min()),
+                "max_val": float(sparsity.max()),
+                "mean_val": float(sparsity.mean())
+            }
         
         # 3. Density Validation
-        density = consolidated["density"]
-        check_finite_and_nan(density, "Attention Density")
-        if (density < 0.0).any() or (density > 1.0).any():
-            raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Density values out of [0, 1] range!")
-        validation_results["density_valid"] = {
-            "status": "PASSED",
-            "min_val": float(density.min()),
-            "max_val": float(density.max()),
-            "mean_val": float(density.mean())
-        }
+        if consolidated.get("is_lightweight", False):
+            d_min = consolidated["density_min"]
+            d_max = consolidated["density_max"]
+            d_mean = consolidated["density_mean"]
+            if np.isnan(d_mean) or not np.isfinite(d_mean):
+                raise ValueError("CRITICAL RESEARCH VALIDATION ERROR: NaN/Infinite density detected!")
+            if d_min < 0.0 or d_max > 1.05:
+                raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Density values out of [0, 1] range! Min: {d_min}, Max: {d_max}")
+            validation_results["density_valid"] = {
+                "status": "PASSED",
+                "min_val": float(d_min),
+                "max_val": float(d_max),
+                "mean_val": float(d_mean)
+            }
+        else:
+            density = consolidated["density"]
+            check_finite_and_nan(density, "Attention Density")
+            if (density < 0.0).any() or (density > 1.0).any():
+                raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Density values out of [0, 1] range!")
+            validation_results["density_valid"] = {
+                "status": "PASSED",
+                "min_val": float(density.min()),
+                "max_val": float(density.max()),
+                "mean_val": float(density.mean())
+            }
         
         # 4. Top-K Monotonicity Validation
         top_k_masses = consolidated["top_k_masses"]
@@ -468,12 +621,21 @@ class ExperimentRunner:
         prev_mean = -1.0
         top_k_status = {}
         for k in k_values:
-            mass = top_k_masses[f"top_{k}_mass"]
-            check_finite_and_nan(mass, f"Top-{k} Cumulative Mass")
-            if (mass < 0.0).any() or (mass > 1.05).any(): # allow tiny floating tolerance
-                raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Top-{k} mass out of bounds! Min: {mass.min()}, Max: {mass.max()}")
+            mass_entry = top_k_masses[f"top_{k}_mass"]
+            if isinstance(mass_entry, dict) and "mean" in mass_entry:
+                curr_mean = mass_entry["mean"]
+                m_min = mass_entry["min"]
+                m_max = mass_entry["max"]
+                if np.isnan(curr_mean) or not np.isfinite(curr_mean):
+                    raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: NaN/Infinite Top-{k} mass detected!")
+                if m_min < 0.0 or m_max > 1.05:
+                    raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Top-{k} mass out of bounds! Min: {m_min}, Max: {m_max}")
+            else:
+                check_finite_and_nan(mass_entry, f"Top-{k} Cumulative Mass")
+                if (mass_entry < 0.0).any() or (mass_entry > 1.05).any(): # allow tiny floating tolerance
+                    raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Top-{k} mass out of bounds! Min: {mass_entry.min()}, Max: {mass_entry.max()}")
+                curr_mean = mass_entry.mean()
             
-            curr_mean = mass.mean()
             if curr_mean < prev_mean:
                 raise ValueError(f"CRITICAL RESEARCH VALIDATION ERROR: Monotonicity violation between Top-K values! Top-{k} has mean {curr_mean:.4f} but previous had {prev_mean:.4f}")
             
@@ -570,14 +732,24 @@ class ExperimentRunner:
         
         mean_entropy = float(consolidated["head_entropy"].mean())
         std_entropy = float(consolidated["head_entropy"].std())
-        mean_sparsity = float(consolidated["sparsity_percentage"].mean())
-        mean_density = float(consolidated["density"].mean())
+        
+        if consolidated.get("is_lightweight", False):
+            mean_sparsity = float(consolidated["sparsity_mean"])
+            mean_density = float(consolidated["density_mean"])
+        else:
+            mean_sparsity = float(consolidated["sparsity_percentage"].mean())
+            mean_density = float(consolidated["density"].mean())
         
         # Top-k stats
         k_values = self.config["analysis"]["top_k_values"]
         top_k_stats = []
         for k in k_values:
-            top_k_stats.append(f"- **Top-{k} Cumulative Mass:** {consolidated['top_k_masses'][f'top_{k}_mass'].mean():.4f}")
+            mass_entry = consolidated['top_k_masses'][f'top_{k}_mass']
+            if isinstance(mass_entry, dict) and "mean" in mass_entry:
+                k_mean = mass_entry["mean"]
+            else:
+                k_mean = mass_entry.mean()
+            top_k_stats.append(f"- **Top-{k} Cumulative Mass:** {k_mean:.4f}")
             
         top_k_str = "\n".join(top_k_stats)
         

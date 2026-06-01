@@ -43,3 +43,5 @@ storage:
   metrics_subdir: "metrics"
   figures_subdir: "figures"
   save_raw_samples: 5            # Number of specific samples to save full raw attention tensors for
+  save_full_metrics: false       # Lightweight mode: if false, discards high-volume cached arrays and saves only aggregated/downsampled metrics
+

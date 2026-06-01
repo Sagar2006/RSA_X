@@ -98,19 +98,55 @@ def main():
     logger.info(f"Loading consolidated metrics from: {npz_path}...")
     npz_data = np.load(npz_path)
     
-    # Reconstruct consolidated metrics dictionary
+    is_lightweight = "is_lightweight" in npz_data and bool(npz_data["is_lightweight"])
     k_values = config["analysis"]["top_k_values"]
-    consolidated = {
-        "head_entropy": npz_data["head_entropy"],
-        "layer_entropy": npz_data["layer_entropy"],
-        "token_entropy": npz_data["token_entropy"],
-        "sparsity_percentage": npz_data["sparsity_percentage"],
-        "density": npz_data["density"],
-        "top_k_masses": {
-            f"top_{k}_mass": npz_data[f"top_{k}_mass"]
-            for k in k_values
+    
+    if is_lightweight:
+        logger.info("Detected lightweight metrics storage schema.")
+        consolidated = {
+            "is_lightweight": True,
+            "head_entropy": npz_data["head_entropy"],
+            "layer_entropy": npz_data["layer_entropy"],
+            "token_entropy": npz_data["token_entropy_flat"],
+            "token_entropy_mean": float(npz_data["token_entropy_mean"]),
+            "token_entropy_seq_len": int(npz_data["token_entropy_seq_len"]),
+            "sparsity_percentage": npz_data["sparsity_layer_flat"],
+            "sparsity_flat": npz_data["sparsity_flat"],
+            "sparsity_mean": float(npz_data["sparsity_mean"]),
+            "sparsity_min": float(npz_data["sparsity_min"]),
+            "sparsity_max": float(npz_data["sparsity_max"]),
+            "sparsity_head_mean": npz_data["sparsity_head_mean"],
+            "sparsity_layer_mean": npz_data["sparsity_layer_mean"],
+            "density": npz_data["density_flat"],
+            "density_mean": float(npz_data["density_mean"]),
+            "density_min": float(npz_data["density_min"]),
+            "density_max": float(npz_data["density_max"]),
+            "density_layer_mean": npz_data["density_layer_mean"],
+            "top_k_masses": {
+                f"top_{k}_mass": {
+                    "mean": float(npz_data[f"top_{k}_mass_mean"]),
+                    "std": float(npz_data[f"top_{k}_mass_std"]),
+                    "min": float(npz_data[f"top_{k}_mass_min"]),
+                    "max": float(npz_data[f"top_{k}_mass_max"]),
+                    "layer_mean": npz_data[f"top_{k}_mass_layer_mean"]
+                }
+                for k in k_values
+            }
         }
-    }
+    else:
+        logger.info("Detected standard metrics storage schema.")
+        consolidated = {
+            "is_lightweight": False,
+            "head_entropy": npz_data["head_entropy"],
+            "layer_entropy": npz_data["layer_entropy"],
+            "token_entropy": npz_data["token_entropy"],
+            "sparsity_percentage": npz_data["sparsity_percentage"],
+            "density": npz_data["density"],
+            "top_k_masses": {
+                f"top_{k}_mass": npz_data[f"top_{k}_mass"]
+                for k in k_values
+            }
+        }
     
     # Initialize Visualizer
     logger.info("Initializing PublicationVisualizer...")
@@ -143,13 +179,25 @@ def main():
         
     # 2. Recreate Figure 2: Entropy Histogram
     logger.info("Regenerating Figure 2 (Entropy Histogram)...")
-    seq_len = consolidated["token_entropy"].shape[3]
-    max_entropy = np.log(seq_len)
-    visualizer.plot_entropy_histogram(consolidated["token_entropy"], max_entropy)
+    if consolidated.get("is_lightweight", False):
+        seq_len = consolidated["token_entropy_seq_len"]
+        max_entropy = np.log(seq_len)
+        visualizer.plot_entropy_histogram(
+            consolidated["token_entropy"], 
+            max_entropy, 
+            mean_entropy=consolidated["token_entropy_mean"]
+        )
+    else:
+        seq_len = consolidated["token_entropy"].shape[3]
+        max_entropy = np.log(seq_len)
+        visualizer.plot_entropy_histogram(consolidated["token_entropy"], max_entropy)
     
     # 3. Recreate Figure 3: Sparsity Histogram
     logger.info("Regenerating Figure 3 (Sparsity Histogram)...")
-    visualizer.plot_sparsity_histogram(consolidated["sparsity_percentage"])
+    visualizer.plot_sparsity_histogram(
+        consolidated["sparsity_flat"] if consolidated.get("is_lightweight", False) else consolidated["sparsity_percentage"],
+        mean_sparsity=consolidated.get("sparsity_mean")
+    )
     
     # 4. Recreate Figure 4: Top-k Mass Curve
     logger.info("Regenerating Figure 4 (Top-K Cumulative Mass Curve)...")
@@ -166,12 +214,15 @@ def main():
     logger.info("Regenerating Figure 6 (Head-wise 12x12 Heatmap Grids)...")
     visualizer.plot_headwise_comparison(
         consolidated["head_entropy"], 
-        consolidated["sparsity_percentage"]
+        consolidated["sparsity_head_mean"] if consolidated.get("is_lightweight", False) else consolidated["sparsity_percentage"]
     )
     
     # 7. Recreate Figure 7: Attention Density Plot
     logger.info("Regenerating Figure 7 (Attention Density Curve)...")
-    visualizer.plot_attention_density(consolidated["density"])
+    visualizer.plot_attention_density(
+        consolidated["density"], 
+        mean_density=consolidated.get("density_mean")
+    )
     
     logger.info(f"All figures successfully regenerated (PNG + PDF format) and saved to: {visualizer.figures_dir}")
     print("\n--- STANDALONE TIMING PROFILE REPORT ---")

@@ -144,7 +144,7 @@ class PublicationVisualizer:
         ax.set_title(f"Attention Map: Layer {layer}, Head {head} (Sample {sample_idx})")
         self.save_figure(f"fig1_attention_heatmap_L{layer}_H{head}_S{sample_idx}", start_time)
 
-    def plot_entropy_histogram(self, token_entropy: np.ndarray, max_entropy: float):
+    def plot_entropy_histogram(self, token_entropy: np.ndarray, max_entropy: float, mean_entropy: float = None):
         """
         2. Entropy Histogram
         Plots the distribution of token attention entropies.
@@ -152,8 +152,9 @@ class PublicationVisualizer:
         """
         start_time = time.perf_counter()
         
-        # Keep exact mathematical mean from the full array
-        mean_entropy = np.mean(token_entropy)
+        # Keep exact mathematical mean
+        if mean_entropy is None:
+            mean_entropy = np.mean(token_entropy)
         
         # Downsample data points for fast seaborn plotting
         flat_entropy = safe_downsample(token_entropy, 50000)
@@ -172,14 +173,15 @@ class PublicationVisualizer:
         
         self.save_figure("fig2_entropy_histogram", start_time)
 
-    def plot_sparsity_histogram(self, sparsity_percentage: np.ndarray):
+    def plot_sparsity_histogram(self, sparsity_percentage: np.ndarray, mean_sparsity: float = None):
         """
         3. Sparsity Histogram
         Plots the distribution of head/token sparsity percentages.
         Optimized via systematic downsampling.
         """
         start_time = time.perf_counter()
-        mean_sparsity = np.mean(sparsity_percentage)
+        if mean_sparsity is None:
+            mean_sparsity = np.mean(sparsity_percentage)
         flat_sparsity = safe_downsample(sparsity_percentage, 50000)
         
         plt.figure(figsize=(8, 5))
@@ -206,9 +208,15 @@ class PublicationVisualizer:
         means = []
         stds = []
         for k in k_values:
-            mass = top_k_masses[f"top_{k}_mass"].flatten()
-            means.append(np.mean(mass))
-            stds.append(np.std(mass))
+            mass_entry = top_k_masses[f"top_{k}_mass"]
+            if isinstance(mass_entry, dict) and "mean" in mass_entry:
+                # Lightweight precomputed metrics
+                means.append(mass_entry["mean"])
+                stds.append(mass_entry["std"])
+            else:
+                mass = mass_entry.flatten()
+                means.append(np.mean(mass))
+                stds.append(np.std(mass))
             
         means = np.array(means)
         stds = np.array(stds)
@@ -248,7 +256,12 @@ class PublicationVisualizer:
         axes[0].set_title("Head Entropy Distribution by Layer")
         
         # Right Boxplot: Sparsity distribution by layer (token-level metrics, downsampled)
-        sparsity_data = [safe_downsample(sparsity_percentage[:, layer, :], 10000) for layer in range(num_layers)]
+        if isinstance(sparsity_percentage, np.ndarray) and sparsity_percentage.ndim == 2:
+            # Pre-downsampled [num_layers, 10000] in lightweight mode
+            sparsity_data = [sparsity_percentage[layer] for layer in range(num_layers)]
+        else:
+            sparsity_data = [safe_downsample(sparsity_percentage[:, layer, :], 10000) for layer in range(num_layers)]
+            
         axes[1].boxplot(sparsity_data, labels=[str(i) for i in range(num_layers)], patch_artist=True,
                         boxprops=dict(facecolor='#c7c7c7', color='#7f7f7f'),
                         medianprops=dict(color='red'))
@@ -267,7 +280,12 @@ class PublicationVisualizer:
         start_time = time.perf_counter()
         # Average metrics across samples to get [num_layers, num_heads]
         mean_entropy_grid = head_entropy.mean(axis=0)
-        mean_sparsity_grid = sparsity_percentage.mean(axis=(0, 3))
+        
+        if isinstance(sparsity_percentage, np.ndarray) and sparsity_percentage.ndim == 2 and sparsity_percentage.shape == (head_entropy.shape[1], head_entropy.shape[2]):
+            # Pre-averaged head grid [num_layers, num_heads] in lightweight mode
+            mean_sparsity_grid = sparsity_percentage
+        else:
+            mean_sparsity_grid = sparsity_percentage.mean(axis=(0, 3))
         
         fig, axes = plt.subplots(1, 2, figsize=(16, 7))
         
@@ -302,14 +320,15 @@ class PublicationVisualizer:
         plt.suptitle("Head-level Specialized Attention Profiling", y=0.98, fontsize=14)
         self.save_figure("fig6_headwise_comparison", start_time)
 
-    def plot_attention_density(self, density_data: np.ndarray):
+    def plot_attention_density(self, density_data: np.ndarray, mean_density: float = None):
         """
         7. Attention Density Plot
         Plots density distribution curve across dataset.
         Optimized via systematic downsampling.
         """
         start_time = time.perf_counter()
-        mean_density = np.mean(density_data)
+        if mean_density is None:
+            mean_density = np.mean(density_data)
         flat_density = safe_downsample(density_data, 50000)
         
         plt.figure(figsize=(8, 5))

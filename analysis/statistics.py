@@ -24,15 +24,22 @@ def generate_summary_tables(metrics: dict) -> pd.DataFrame:
     mean_entropy = head_entropy.mean(axis=(0, 2))
     std_entropy = head_entropy.std(axis=(0, 2))
     
-    # Sparsity metrics
-    sparsity_pct = metrics["sparsity_percentage"].mean(axis=(0, 2, 3)) # [num_layers]
-    density = metrics["density"].mean(axis=(0, 2, 3))
-    
-    # Top-k masses
-    top_1 = metrics["top_k_masses"]["top_1_mass"].mean(axis=(0, 2, 3))
-    top_5 = metrics["top_k_masses"]["top_5_mass"].mean(axis=(0, 2, 3))
-    top_10 = metrics["top_k_masses"]["top_10_mass"].mean(axis=(0, 2, 3))
-    top_50 = metrics["top_k_masses"]["top_50_mass"].mean(axis=(0, 2, 3))
+    # Sparsity metrics and Top-k masses
+    if metrics.get("is_lightweight", False):
+        sparsity_pct = metrics["sparsity_layer_mean"]
+        density = metrics["density_layer_mean"]
+        top_1 = metrics["top_k_masses"]["top_1_mass"]["layer_mean"]
+        top_5 = metrics["top_k_masses"]["top_5_mass"]["layer_mean"]
+        top_10 = metrics["top_k_masses"]["top_10_mass"]["layer_mean"]
+        top_50 = metrics["top_k_masses"]["top_50_mass"]["layer_mean"]
+    else:
+        sparsity_pct = metrics["sparsity_percentage"].mean(axis=(0, 2, 3)) # [num_layers]
+        density = metrics["density"].mean(axis=(0, 2, 3))
+        
+        top_1 = metrics["top_k_masses"]["top_1_mass"].mean(axis=(0, 2, 3))
+        top_5 = metrics["top_k_masses"]["top_5_mass"].mean(axis=(0, 2, 3))
+        top_10 = metrics["top_k_masses"]["top_10_mass"].mean(axis=(0, 2, 3))
+        top_50 = metrics["top_k_masses"]["top_50_mass"].mean(axis=(0, 2, 3))
     
     # Construct Summary DataFrame
     summary_df = pd.DataFrame({

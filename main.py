@@ -79,8 +79,16 @@ def main():
         type=int, 
         help="Override number of samples to save full raw attention matrices for"
     )
+    parser.add_argument(
+        "--save_full_metrics", 
+        type=lambda x: (str(x).lower() == 'true'),
+        help="Save full high-volume metrics instead of lightweight metrics"
+    )
     
     args = parser.parse_args()
+    
+    # 1. Cascade Merge overrides... (keep rest identical)
+
     
     # 1. Configuration Cascading Merge
     PROJECT_ROOT = PathManager.get_project_root()
@@ -116,6 +124,8 @@ def main():
         config["wandb"]["mode"] = args.wandb_mode
     if args.save_raw_samples is not None:
         config["storage"]["save_raw_samples"] = args.save_raw_samples
+    if args.save_full_metrics is not None:
+        config["storage"]["save_full_metrics"] = args.save_full_metrics
         
     # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
