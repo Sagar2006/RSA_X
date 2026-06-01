@@ -84,6 +84,12 @@ def main():
         type=lambda x: (str(x).lower() == 'true'),
         help="Save full high-volume metrics instead of lightweight metrics"
     )
+    parser.add_argument(
+        "--cross_model", 
+        type=lambda x: (str(x).lower() == 'true'),
+        default=False,
+        help="Execute cross-model scientific validation comparative suite"
+    )
     
     args = parser.parse_args()
     
@@ -273,8 +279,14 @@ def main():
     # 5. Execute Experiments & Measure Total Duration
     start_perf = time.perf_counter()
     try:
-        runner = ExperimentRunner(config)
-        runner.run_all_experiments()
+        if args.cross_model:
+            logger.info("Executing Phase 2 Cross-Model Scientific Validation Suite...")
+            from experiments.cross_model_validation import CrossModelValidator
+            validator = CrossModelValidator(config)
+            validator.run_validation_suite()
+        else:
+            runner = ExperimentRunner(config)
+            runner.run_all_experiments()
         logger.info("RSA-X experimental run completed successfully.")
     except Exception as e:
         logger.critical(f"RSA-X encountered a fatal execution error: {e}", exc_info=True)

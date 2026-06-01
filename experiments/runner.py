@@ -172,6 +172,32 @@ class ExperimentRunner:
         metric_aggregation_end = time.perf_counter()
         metric_aggregation_time = metric_aggregation_end - metric_aggregation_start
         
+        # Precompute high-precision correlations and sample-level aggregates before lightweight pruning
+        flat_entropy = consolidated["head_entropy"].flatten()
+        head_sparsity = consolidated["sparsity_percentage"].mean(axis=-1).flatten()
+        head_density = consolidated["density"].mean(axis=-1).flatten()
+        head_top1 = consolidated["top_k_masses"]["top_1_mass"].mean(axis=-1).flatten()
+        
+        from scipy.stats import pearsonr
+        r_es, p_es = pearsonr(flat_entropy, head_sparsity)
+        r_ed, p_ed = pearsonr(flat_entropy, head_density)
+        r_st, p_st = pearsonr(head_sparsity, head_top1)
+        
+        self.precomputed_correlations = {
+            "entropy_vs_sparsity": {"pearson_r": float(r_es), "p_value": float(p_es)},
+            "entropy_vs_density": {"pearson_r": float(r_ed), "p_value": float(p_ed)},
+            "sparsity_vs_top1_mass": {"pearson_r": float(r_st), "p_value": float(p_st)}
+        }
+        
+        self.sample_sparsity = consolidated["sparsity_percentage"].mean(axis=(1, 2, 3))
+        self.sample_density = consolidated["density"].mean(axis=(1, 2, 3))
+        self.sample_top1 = consolidated["top_k_masses"]["top_1_mass"].mean(axis=(1, 2, 3))
+        self.sample_top5 = consolidated["top_k_masses"]["top_5_mass"].mean(axis=(1, 2, 3))
+        self.sample_top10 = consolidated["top_k_masses"]["top_10_mass"].mean(axis=(1, 2, 3))
+        self.sample_top50 = consolidated["top_k_masses"]["top_50_mass"].mean(axis=(1, 2, 3))
+        
+        self.consolidated = consolidated
+        
         # 4. Metrics Save Bottleneck Benchmarking (Part 2)
         logger.info("Running consolidated metrics saving benchmark profile...")
         bench_results = {}

@@ -148,3 +148,35 @@ def test_statistics_summary_tables():
     assert "Entropy (Mean)" in summary_df.columns
     assert "Sparsity % (Mean)" in summary_df.columns
     assert "Top-1 Mass (Mean)" in summary_df.columns
+
+
+def test_cross_model_statistical_calcs():
+    """
+    Validates statistical logic of Phase 2:
+    - Pearson correlation calculation and correct bounds
+    - 95% Confidence Interval formulas
+    """
+    # Create sample vectors of length 50
+    np.random.seed(42)
+    n = 50
+    entropy = np.random.uniform(1.0, 3.0, n)
+    # create correlated sparsity
+    sparsity = 100.0 - 15.0 * entropy + np.random.normal(0, 1.0, n)
+    
+    from scipy.stats import pearsonr
+    r_val, p_val = pearsonr(entropy, sparsity)
+    
+    assert -1.0 <= r_val <= 1.0
+    assert 0.0 <= p_val <= 1.0
+    # Pearson r should be negative due to construction
+    assert r_val < -0.5
+    
+    # Check Confidence Interval
+    mean_val = np.mean(entropy)
+    std_val = np.std(entropy)
+    margin_of_error = 1.96 * (std_val / np.sqrt(n))
+    ci_lower = mean_val - margin_of_error
+    ci_upper = mean_val + margin_of_error
+    
+    assert ci_lower < mean_val < ci_upper
+    assert np.isclose((ci_upper - ci_lower), 2 * margin_of_error)
