@@ -95,60 +95,114 @@ class ExperimentRunner:
             input_ids = batch["input_ids"]
             batch_size = input_ids.shape[0]
             
-            # Extract attention tensors
+            # Initialize lists to store metrics for this batch across layers
+            batch_head_entropies = [None] * self.num_layers
+            batch_layer_entropies = [None] * self.num_layers
+            batch_token_entropies = [None] * self.num_layers
+            batch_sparsity_percentages = [None] * self.num_layers
+            batch_densities = [None] * self.num_layers
+            batch_top_k_masses = {f"top_{k}_mass": [None] * self.num_layers for k in k_values}
+            
+            sample_0_patterns = [None] * self.num_layers
+            hook_compute_time = [0.0]
+            hook_transfer_time = [0.0]
+            
+            # Helper hook function generator to process layers sequentially
+            def make_hook(layer_idx):
+                def hook_fn(pattern, hook):
+                    # pattern shape: [batch_size, num_heads, seq_len, seq_len]
+                    # Unsqueeze to [batch_size, 1, num_heads, seq_len, seq_len] for standard analyzers
+                    pattern_expanded = pattern.unsqueeze(1)
+                    
+                    entropy_metrics = self.entropy_analyzer.analyze(pattern_expanded)
+                    sparsity_metrics = self.sparsity_analyzer.analyze(pattern_expanded)
+                    
+                    # Store computed metrics per layer (extracting index 0 along layer dimension)
+                    batch_head_entropies[layer_idx] = entropy_metrics["head_entropy"][:, 0]
+                    batch_layer_entropies[layer_idx] = entropy_metrics["layer_entropy"][:, 0]
+                    batch_token_entropies[layer_idx] = entropy_metrics["token_entropy"][:, 0]
+                    batch_sparsity_percentages[layer_idx] = sparsity_metrics["sparsity_percentage"][:, 0]
+                    batch_densities[layer_idx] = sparsity_metrics["density"][:, 0]
+                    
+                    for k in k_values:
+                        batch_top_k_masses[f"top_{k}_mass"][layer_idx] = sparsity_metrics["top_k_masses"][f"top_{k}_mass"][:, 0]
+                    
+                    # Accumulate hook timings
+                    hook_compute_time[0] += entropy_metrics["timings"]["metric_computation"] + sparsity_metrics["timings"]["metric_computation"]
+                    hook_transfer_time[0] += entropy_metrics["timings"]["tensor_transfer"] + sparsity_metrics["timings"]["tensor_transfer"]
+                    
+                    # Keep first sample pattern for visualization on CPU
+                    if sample_count == 0:
+                        sample_0_patterns[layer_idx] = pattern[0].cpu().numpy()
+                    
+                    # Clean up GPU memory immediately
+                    del pattern_expanded
+                    torch.cuda.empty_cache()
+                    import gc
+                    gc.collect()
+                    return pattern
+                return hook_fn
+            
+            hooks = []
+            for l in range(self.num_layers):
+                hooks.append((f"blocks.{l}.attn.hook_pattern", make_hook(l)))
+                
+            # Run forward pass with hooks and time attention extraction
             extract_start = time.perf_counter()
-            patterns = self.extractor.extract_batch(input_ids)
+            with torch.no_grad():
+                self.extractor.model.run_with_hooks(
+                    input_ids.to(self.extractor.device),
+                    fwd_hooks=hooks
+                )
             extract_end = time.perf_counter()
             self.perf_timers["attention_extraction"] += (extract_end - extract_start)
             
-            # Analyze each batch
-            entropy_metrics = self.entropy_analyzer.analyze(patterns)
-            sparsity_metrics = self.sparsity_analyzer.analyze(patterns)
+            # Stack across layers (dimension 1) to match standard output format
+            head_entropy = np.stack(batch_head_entropies, axis=1)
+            layer_entropy = np.stack(batch_layer_entropies, axis=1)
+            token_entropy = np.stack(batch_token_entropies, axis=1)
+            sparsity_percentage = np.stack(batch_sparsity_percentages, axis=1)
+            density = np.stack(batch_densities, axis=1)
             
             # Accumulate batch metrics
-            all_head_entropies.append(entropy_metrics["head_entropy"]) # [batch_size, layers, heads]
-            all_layer_entropies.append(entropy_metrics["layer_entropy"]) # [batch_size, layers]
-            all_token_entropies.append(entropy_metrics["token_entropy"]) # [batch_size, layers, heads, seq_len]
-            all_sparsity_percentages.append(sparsity_metrics["sparsity_percentage"]) # [batch_size, layers, heads, seq_len]
-            all_densities.append(sparsity_metrics["density"]) # [batch_size, layers, heads, seq_len]
+            all_head_entropies.append(head_entropy)
+            all_layer_entropies.append(layer_entropy)
+            all_token_entropies.append(token_entropy)
+            all_sparsity_percentages.append(sparsity_percentage)
+            all_densities.append(density)
             
             # Accumulate analyzer timers
-            self.perf_timers["metric_computation"] += entropy_metrics["timings"]["metric_computation"]
-            self.perf_timers["tensor_transfer"] += entropy_metrics["timings"]["tensor_transfer"]
-            
-            self.perf_timers["metric_computation"] += sparsity_metrics["timings"]["metric_computation"]
-            self.perf_timers["tensor_transfer"] += sparsity_metrics["timings"]["tensor_transfer"]
+            self.perf_timers["metric_computation"] += hook_compute_time[0]
+            self.perf_timers["tensor_transfer"] += hook_transfer_time[0]
             
             for k in k_values:
-                all_top_k_masses[f"top_{k}_mass"].append(sparsity_metrics["top_k_masses"][f"top_{k}_mass"])
+                k_mass = np.stack(batch_top_k_masses[f"top_{k}_mass"], axis=1)
+                all_top_k_masses[f"top_{k}_mass"].append(k_mass)
                 
-            # Process individual samples in the batch for saving raw data
+            # Process individual samples in the batch for saving raw data / visualization setup
             for item_idx in range(batch_size):
                 global_idx = sample_count
                 
-                # Retrieve text tokens using HookedTransformer utility
-                token_ids = input_ids[item_idx]
-                tokens_str = self.extractor.model.to_str_tokens(token_ids)
-                
-                # Check if we should save raw attention patterns (Hard storage-efficient limit: max 3 samples)
+                # Check if we should save raw attention patterns (disabled in this sequential mode to avoid VRAM overhead)
                 if global_idx < min(save_raw_limit, 3):
-                    logger.info(f"Saving raw attention weights for sample {global_idx}...")
-                    # Extract sample pattern: [num_layers, num_heads, seq_len, seq_len]
-                    sample_pattern = patterns[item_idx]
-                    save_res = self.extractor.save_raw_attention(sample_pattern, tokens_str, global_idx)
+                    logger.warning("Saving raw attention patterns is disabled in sequential execution mode.")
                     
-                    # Accumulate save raw timers
-                    self.perf_timers["tensor_transfer"] += save_res["timings"]["tensor_transfer"]
-                    self.perf_timers["compression"] += save_res["timings"]["compression"]
-                    self.perf_timers["disk_write"] += save_res["timings"]["disk_write"]
+                # Reconstruct visualization variables for sample 0
+                if global_idx == 0 and sample_0_patterns[0] is not None:
+                    visualize_sample_pattern = np.stack(sample_0_patterns, axis=0)
+                    token_ids = input_ids[item_idx]
+                    visualize_sample_tokens = self.extractor.model.to_str_tokens(token_ids)
+                    visualize_sample_idx = global_idx
                     
-                    # Keep one sample for figure 1 visualization (middle layer, middle head)
-                    if global_idx == 0:
-                        visualize_sample_pattern = sample_pattern.cpu().numpy()
-                        visualize_sample_tokens = tokens_str
-                        visualize_sample_idx = global_idx
-                        
                 sample_count += 1
+            
+            # Free temp batch structures
+            del batch_head_entropies, batch_layer_entropies, batch_token_entropies
+            del batch_sparsity_percentages, batch_densities, batch_top_k_masses
+            del sample_0_patterns
+            torch.cuda.empty_cache()
+            import gc
+            gc.collect()
             
             # Dynamic batch progress tracking to prevent silent stall illusion
             total_samples = len(loader.dataset)

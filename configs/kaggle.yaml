@@ -1,12 +1,12 @@
-# RSA-X Kaggle Configuration Override (T4 GPU Optimized)
+# RSA-X Kaggle Configuration Override (Tesla T4 Optimized Run)
 
 dataset:
-  num_samples: 1000             # Full test split representation
-  max_seq_len: 512               # standard attention sequence length
-  batch_size: 4                 # Optimized batch size for T4 GPU VRAM
+  num_samples: 100
+  max_seq_len: 512
+  batch_size: 1
 
 model:
-  device: "cuda"                # Force GPU acceleration
+  device: "cuda"
 
 storage:
-  save_raw_samples: 10          # Keep a representable subset of raw logs
+  save_raw_samples: 0

@@ -205,22 +205,12 @@ def main():
         config["storage"]["save_raw_attention"] = False
         config["analysis"]["density_threshold"] = 1.0 / 256.0
     elif selected_mode == "GPU_MODE":
-        config["dataset"]["num_samples"] = 500
+        config["dataset"]["num_samples"] = 100
         config["dataset"]["max_seq_len"] = 512
+        config["dataset"]["batch_size"] = 1
         config["storage"]["save_raw_samples"] = 0
         config["storage"]["save_raw_attention"] = False
         config["analysis"]["density_threshold"] = 1.0 / 512.0
-        
-        # Automatic Batch Size Selection
-        if config["dataset"].get("batch_size") == "auto" or config["dataset"].get("batch_size") is None or args.batch_size is None:
-            if gpu_vram_gb <= 4.0:
-                config["dataset"]["batch_size"] = 1
-            elif gpu_vram_gb <= 8.0:
-                config["dataset"]["batch_size"] = 2
-            elif gpu_vram_gb <= 16.0:
-                config["dataset"]["batch_size"] = 4
-            else:
-                config["dataset"]["batch_size"] = 8
     elif selected_mode == "RESEARCH_MODE":
         # Keep config defaults but allow limited raw archival
         config["storage"]["save_raw_attention"] = config["storage"].get("save_raw_attention", True)
@@ -287,6 +277,11 @@ def main():
         else:
             runner = ExperimentRunner(config)
             runner.run_all_experiments()
+            
+            logger.info("Executing Phase 2 Cross-Model Scientific Validation Suite automatically...")
+            from experiments.cross_model_validation import CrossModelValidator
+            validator = CrossModelValidator(config)
+            validator.run_validation_suite()
         logger.info("RSA-X experimental run completed successfully.")
     except Exception as e:
         logger.critical(f"RSA-X encountered a fatal execution error: {e}", exc_info=True)

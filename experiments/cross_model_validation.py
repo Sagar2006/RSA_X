@@ -81,10 +81,11 @@ class CrossModelValidator:
             model_config["storage"] = model_config["storage"].copy()
             model_config["storage"]["results_dir"] = str(self.results_dir)
             
-            # Enforce same sample count and seq len
+            # Enforce same sample count, seq len and batch size
             model_config["dataset"] = model_config["dataset"].copy()
             model_config["dataset"]["num_samples"] = self.num_samples
             model_config["dataset"]["max_seq_len"] = self.max_seq_len
+            model_config["dataset"]["batch_size"] = 1
             
             # 2. Run runner in lightweight mode to save storage, but intercept the raw aggregates in-memory
             # Ensure save_full_metrics is False to keep file size < 25 MB
