@@ -1,3 +1,14 @@
+# Prevent native binary compatibility / CUDA library version mismatches (e.g. libcudart.so.13)
+# in Kaggle environments by mocking unused audio/vision libraries before importing transformers.
+import sys
+import types
+dummy_torchaudio = types.ModuleType("torchaudio")
+dummy_torchaudio.__path__ = []
+sys.modules["torchaudio"] = dummy_torchaudio
+dummy_torchvision = types.ModuleType("torchvision")
+dummy_torchvision.__path__ = []
+sys.modules["torchvision"] = dummy_torchvision
+
 import os
 import argparse
 import yaml
