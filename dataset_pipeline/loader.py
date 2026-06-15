@@ -51,15 +51,70 @@ def get_dataset_loader(config: dict) -> DataLoader:
     load_start = time.perf_counter()
     try:
         if dataset_name == "ptb_text_only":
+            dataset = None
+            last_err = None
+            
+            # Method 1: Download raw text from yoonkim/lstm data source on GitHub (script-free)
+            try:
+                logger.info("Attempting to download Penn Treebank raw text from Github source...")
+                url = "https://raw.githubusercontent.com/wojzaremba/lstm/master/data/ptb.test.txt"
+                import urllib.request
+                import ssl
+                context = ssl._create_unverified_context()
+                local_file = "ptb_test_temp.txt"
+                req = urllib.request.Request(
+                    url, 
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                with urllib.request.urlopen(req, context=context) as response:
+                    with open(local_file, 'wb') as out_file:
+                        out_file.write(response.read())
+                
+                dataset = load_dataset("text", data_files={"test": local_file}, split="test")
+                logger.info("Successfully loaded Penn Treebank via raw Github download.")
+            except Exception as e:
+                logger.warning(f"Raw Github download failed: {e}. Trying HF alternatives...")
+                last_err = e
+            
+            # Method 2: Try HF repositories
+            if dataset is None:
+                ptb_alternatives = [
+                    ("FALcon6/ptb_text_only", "refs/convert/parquet"),
+                    ("shenlong7/ptb_text_only", "refs/convert/parquet"),
+                    ("FALcon6/ptb_text_only", None),
+                    ("shenlong7/ptb_text_only", None),
+                    ("ptb_text_only", "refs/convert/parquet"),
+                    ("ptb_text_only", None)
+                ]
+                for ptb_repo, revision in ptb_alternatives:
+                    try:
+                        if revision:
+                            logger.info(f"Attempting to load PTB from HF repository: {ptb_repo} (revision: {revision})...")
+                            dataset = load_dataset(ptb_repo, revision=revision, split=split)
+                        else:
+                            logger.info(f"Attempting to load PTB from HF repository: {ptb_repo} (trust_remote_code=True)...")
+                            dataset = load_dataset(ptb_repo, split=split, trust_remote_code=True)
+                        logger.info(f"Successfully loaded PTB from {ptb_repo} (revision: {revision})")
+                        break
+                    except Exception as e:
+                        last_err = e
+                        try:
+                            if not revision:
+                                dataset = load_dataset(ptb_repo, split=split)
+                                logger.info(f"Successfully loaded PTB from {ptb_repo} (no trust_remote_code)")
+                                break
+                        except Exception as e2:
+                            last_err = e2
+            if dataset is None:
+                raise last_err if last_err is not None else RuntimeError("All PTB loaders failed.")
+        else:
             try:
                 dataset = load_dataset(dataset_name, dataset_config, split=split)
             except Exception:
-                dataset = load_dataset(dataset_name, split=split)
-        else:
-            dataset = load_dataset(dataset_name, dataset_config, split=split)
+                dataset = load_dataset(dataset_name, dataset_config, trust_remote_code=True, split=split)
     except Exception as e:
-        logger.warning(f"Failed to load {dataset_config} due to: {e}. Falling back to wikitext-2-raw-v1...")
-        dataset = load_dataset(dataset_name, "wikitext-2-raw-v1", split=split)
+        logger.warning(f"Failed to load {dataset_name} ({dataset_config}) due to: {e}. Falling back to wikitext-2-raw-v1...")
+        dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split=split)
     load_end = time.perf_counter()
     dataset_load_time = load_end - load_start
         
