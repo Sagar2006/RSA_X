@@ -90,6 +90,11 @@ def main():
         default=False,
         help="Execute cross-model scientific validation comparative suite"
     )
+    parser.add_argument(
+        "--compare_datasets",
+        action="store_true",
+        help="Execute dataset comparison scientific analysis suite"
+    )
     
     args = parser.parse_args()
     
@@ -132,6 +137,8 @@ def main():
         config["storage"]["save_raw_samples"] = args.save_raw_samples
     if args.save_full_metrics is not None:
         config["storage"]["save_full_metrics"] = args.save_full_metrics
+    if args.compare_datasets:
+        config["compare_datasets"] = True
         
     # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
@@ -269,7 +276,12 @@ def main():
     # 5. Execute Experiments & Measure Total Duration
     start_perf = time.perf_counter()
     try:
-        if args.cross_model:
+        if args.compare_datasets or config.get("compare_datasets", False):
+            logger.info("Executing Phase 2B Dataset Comparison Scientific Analysis Suite...")
+            from experiments.dataset_comparison import DatasetComparator
+            comparator = DatasetComparator(config)
+            comparator.run_comparison_suite()
+        elif args.cross_model:
             logger.info("Executing Phase 2 Cross-Model Scientific Validation Suite...")
             from experiments.cross_model_validation import CrossModelValidator
             validator = CrossModelValidator(config)

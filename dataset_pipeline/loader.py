@@ -50,7 +50,13 @@ def get_dataset_loader(config: dict) -> DataLoader:
     # Load dataset. Fallback to wikitext-2 if 103 fails or for offline tests if requested.
     load_start = time.perf_counter()
     try:
-        dataset = load_dataset(dataset_name, dataset_config, split=split)
+        if dataset_name == "ptb_text_only":
+            try:
+                dataset = load_dataset(dataset_name, dataset_config, split=split)
+            except Exception:
+                dataset = load_dataset(dataset_name, split=split)
+        else:
+            dataset = load_dataset(dataset_name, dataset_config, split=split)
     except Exception as e:
         logger.warning(f"Failed to load {dataset_config} due to: {e}. Falling back to wikitext-2-raw-v1...")
         dataset = load_dataset(dataset_name, "wikitext-2-raw-v1", split=split)
@@ -60,15 +66,25 @@ def get_dataset_loader(config: dict) -> DataLoader:
     logger.info(f"Tokenizing split '{split}'...")
     tokenize_start = time.perf_counter()
     
+    # Find the text column name dynamically
+    possible_cols = ["text", "sentence"]
+    text_column = None
+    for col in possible_cols:
+        if col in dataset.column_names:
+            text_column = col
+            break
+    if text_column is None:
+        text_column = dataset.column_names[0]
+        
     # Define tokenization helper
     def tokenize_function(examples):
-        return tokenizer(examples["text"], truncation=False, padding=False)
+        return tokenizer(examples[text_column], truncation=False, padding=False)
         
     # Process text column
     tokenized_dataset = dataset.map(
         tokenize_function,
         batched=True,
-        remove_columns=["text"],
+        remove_columns=[text_column],
         desc="Tokenizing dataset"
     )
     

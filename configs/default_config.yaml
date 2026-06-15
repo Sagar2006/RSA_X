@@ -45,3 +45,7 @@ storage:
   save_raw_samples: 5            # Number of specific samples to save full raw attention tensors for
   save_full_metrics: false       # Lightweight mode: if false, discards high-volume cached arrays and saves only aggregated/downsampled metrics
 
+# Dataset comparison settings
+compare_datasets: false          # If true, runs the scientific dataset comparison suite
+
+
