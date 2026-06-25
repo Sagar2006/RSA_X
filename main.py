@@ -137,22 +137,6 @@ def main():
         except Exception as e:
             print(f"WARNING: Failed to load override configuration {args.config} ({e}). Proceeding with default configs.")
             
-    # Apply direct CLI argument overrides
-    if args.num_samples is not None:
-        config["dataset"]["num_samples"] = args.num_samples
-    if args.batch_size is not None:
-        config["dataset"]["batch_size"] = args.batch_size
-    if args.device is not None:
-        config["model"]["device"] = args.device
-    if args.wandb_mode is not None:
-        config["wandb"]["mode"] = args.wandb_mode
-    if args.save_raw_samples is not None:
-        config["storage"]["save_raw_samples"] = args.save_raw_samples
-    if args.save_full_metrics is not None:
-        config["storage"]["save_full_metrics"] = args.save_full_metrics
-    if args.compare_datasets:
-        config["compare_datasets"] = True
-        
     # 2. Results Directory Timestamping Isolation (Enforce absolute project-root pathing)
     timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     run_folder = f"run_{timestamp}"
@@ -227,7 +211,7 @@ def main():
     elif selected_mode == "GPU_MODE":
         config["dataset"]["num_samples"] = 100
         config["dataset"]["max_seq_len"] = 512
-        config["dataset"]["batch_size"] = 1
+        config["dataset"]["batch_size"] = 16
         config["storage"]["save_raw_samples"] = 0
         config["storage"]["save_raw_attention"] = False
         config["analysis"]["density_threshold"] = 1.0 / 512.0
@@ -257,6 +241,27 @@ def main():
         config["model"]["device"] = "cuda"
     elif selected_mode == "LOW_RESOURCE_MODE" or selected_mode == "STANDARD_MODE":
         config["model"]["device"] = "cpu"
+        
+    # Apply direct CLI argument overrides (CLI takes final precedence)
+    if args.num_samples is not None:
+        config["dataset"]["num_samples"] = args.num_samples
+    if args.batch_size is not None:
+        config["dataset"]["batch_size"] = args.batch_size
+    if args.device is not None:
+        config["model"]["device"] = args.device
+    if args.wandb_mode is not None:
+        config["wandb"]["mode"] = args.wandb_mode
+    if args.save_raw_samples is not None:
+        config["storage"]["save_raw_samples"] = args.save_raw_samples
+    if args.save_full_metrics is not None:
+        config["storage"]["save_full_metrics"] = args.save_full_metrics
+    if args.compare_datasets:
+        config["compare_datasets"] = True
+
+    # If execution device is CUDA, restrict PyTorch CPU thread count to 1 to reduce host CPU footprint.
+    if config["model"]["device"] == "cuda":
+        torch.set_num_threads(1)
+        logger.info("Restricting PyTorch CPU thread count to 1 to minimize host CPU footprint.")
         
     # Write hardware_profile.json
     hardware_profile = {

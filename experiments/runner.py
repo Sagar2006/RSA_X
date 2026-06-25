@@ -137,9 +137,6 @@ class ExperimentRunner:
                     
                     # Clean up GPU memory immediately
                     del pattern_expanded
-                    torch.cuda.empty_cache()
-                    import gc
-                    gc.collect()
                     return pattern
                 return hook_fn
             
@@ -200,9 +197,6 @@ class ExperimentRunner:
             del batch_head_entropies, batch_layer_entropies, batch_token_entropies
             del batch_sparsity_percentages, batch_densities, batch_top_k_masses
             del sample_0_patterns
-            torch.cuda.empty_cache()
-            import gc
-            gc.collect()
             
             # Dynamic batch progress tracking to prevent silent stall illusion
             total_samples = len(loader.dataset)

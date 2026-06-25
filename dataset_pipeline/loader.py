@@ -179,7 +179,8 @@ def get_dataset_loader(config: dict) -> DataLoader:
         block_dataset,
         batch_size=batch_size,
         shuffle=False,
-        drop_last=False
+        drop_last=False,
+        pin_memory=torch.cuda.is_available()
     )
     
     # Attach timings as custom attributes
